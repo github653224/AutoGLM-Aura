@@ -3,6 +3,9 @@ package com.autoglm.autoagent.ui
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,6 +17,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -54,6 +60,11 @@ class HomeViewModel @Inject constructor(
     private val agentRepository: AgentRepository,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
+    
+    init {
+        // Preload voice model on ViewModel creation
+        agentRepository.preloadVoiceModel()
+    }
     
     // 监听AgentRepository的消息
     val messages = agentRepository.chatMessages
@@ -162,6 +173,9 @@ class HomeViewModel @Inject constructor(
     }
 
     fun stopExecution() {
+        if (agentState.value is AgentState.Listening) {
+             agentRepository.cancelListening()
+        }
         agentRepository.stopAgent()
         _isLoading.value = false
     }
@@ -182,6 +196,7 @@ fun HomeScreen(
     val agentState by viewModel.agentState.collectAsState()
     val isRecording = agentState is AgentState.Listening
 
+    // Root Container with Particle Background
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -191,343 +206,234 @@ fun HomeScreen(
                 )
             )
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize()
-        ) {
-            // 顶部导航栏
-            TopAppBar(
-                title = { 
-                    Text(
-                        "智灵助手",
-                        color = TextPrimary,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold
-                    ) 
-                },
-                actions = {
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "设置",
-                            tint = TextPrimary
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = DarkBackground.copy(alpha = 0.8f)
-                )
-            )
-
-            // 中央内容区域
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Spacer(modifier = Modifier.height(40.dp))
-
-                // 发光圆环动画
-                AnimatedGlowingCircle(
-                    modifier = Modifier.size(220.dp),
-                    isActive = isLoading
-                )
-
-                Spacer(modifier = Modifier.height(32.dp))
-
-                // 状态文本
-                Text(
-                    text = agentStatus,
-                    color = TextPrimary,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Medium
-                )
-
-                Spacer(modifier = Modifier.height(40.dp))
-
-                // 可展开日志面板
-                ExpandableLogCard(
-                    lastCommand = lastUserCommand,
-                    logs = logEntries,
-                    isExpanded = isLogExpanded,
-                    onToggle = { viewModel.toggleLogPanel() },
-                    modifier = Modifier.padding(horizontal = 32.dp)
-                )
-            }
-
-            // 底部控制区域
-            AnimatedContent(
-                targetState = showTextInput,
-                label = "input_mode",
-                transitionSpec = {
-                    (slideInVertically { height -> height } + fadeIn()) togetherWith
-                            (slideOutVertically { height -> height } + fadeOut())
-                }
-            ) { isTextMode ->
-                if (isTextMode) {
-                    // 文本输入模式
-                    TextInputBar(
-                        onSend = { text ->
-                            viewModel.sendMessage(text)
-                            viewModel.toggleTextInput()
-                        },
-                        onBack = { viewModel.toggleTextInput() },
-                        enabled = !isLoading
-                    )
-                } else {
-                    // 语音控制模式
-                    VoiceControlBar(
-                        onKeyboardClick = { viewModel.toggleTextInput() },
-                        onMicClick = { 
-                            if (isRecording) viewModel.stopExecution() // Or specific stop listening
-                            else viewModel.startVoiceRecording() 
-                        },
-                        onStopClick = { viewModel.stopExecution() },
-                        isRecording = isRecording
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun VoiceControlBar(
-    onKeyboardClick: () -> Unit,
-    onMicClick: () -> Unit,
-    onStopClick: () -> Unit,
-    isRecording: Boolean
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 32.dp, vertical = 32.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // 键盘按钮
-        IconButton(
-            onClick = onKeyboardClick,
-            modifier = Modifier
-                .size(56.dp)
-                .clip(CircleShape)
-                .background(CardBackground)
-        ) {
-            Text(
-                text = "⌨️",
-                fontSize = 28.sp
-            )
-        }
-
-        // 麦克风按钮 (带发光效果)
-        Box(
-            contentAlignment = Alignment.Center
-        ) {
-            // 发光背景层
-            if (isRecording) {
-                Box(
-                    modifier = Modifier
-                        .size(90.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(
-                                    GlowBlue.copy(alpha = 0.6f),
-                                    GlowBlue.copy(alpha = 0.2f),
-                                    androidx.compose.ui.graphics.Color.Transparent
-                                )
-                            )
-                        )
-                )
-            }
-
-            // 按钮本体
-            IconButton(
-                onClick = onMicClick,
-                modifier = Modifier
-                    .size(72.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(PrimaryBlue, PrimaryBlueDark)
-                        )
-                    ),
-                enabled = !isRecording
-            ) {
-                Text(
-                    text = "🎤",
-                    fontSize = 32.sp
-                )
-            }
-        }
-
-        // 停止按钮
-        IconButton(
-            onClick = onStopClick,
-            modifier = Modifier
-                .size(56.dp)
-                .clip(CircleShape)
-                .background(StopRed)
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "⏹",
-                    fontSize = 24.sp
-                )
-                Text(
-                    text = "STOP",
-                    color = TextPrimary,
-                    fontSize = 8.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun TextInputBar(
-    onSend: (String) -> Unit,
-    onBack: () -> Unit,
-    enabled: Boolean
-) {
-    var inputText by remember { mutableStateOf("") }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(CardBackground)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        // 返回按钮
-        IconButton(
-            onClick = onBack,
-            modifier = Modifier.size(40.dp)
-        ) {
-            Text(
-                text = "←",
-                fontSize = 24.sp,
-                color = TextPrimary
-            )
-        }
-
-        // 输入框
-        TextField(
-            value = inputText,
-            onValueChange = { inputText = it },
-            modifier = Modifier.weight(1f),
-            placeholder = { Text("输入指令...", color = TextHint) },
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = CardBackgroundDark,
-                unfocusedContainerColor = CardBackgroundDark,
-                focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary,
-                cursorColor = PrimaryBlue,
-                focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
-            ),
-            shape = RoundedCornerShape(12.dp),
-            enabled = enabled
+        // 1. Ambient Motion Layer
+        com.autoglm.autoagent.ui.components.ParticleBackground(
+            modifier = Modifier.fillMaxSize().alpha(0.6f)
         )
 
-        // 发送按钮
-        IconButton(
-            onClick = {
-                if (inputText.isNotBlank()) {
-                    onSend(inputText)
-                    inputText = ""
-                }
-            },
+        Column(
             modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(
-                    if (inputText.isNotBlank()) PrimaryBlue 
-                    else CardBackgroundDark
-                ),
-            enabled = enabled && inputText.isNotBlank()
+                .fillMaxSize()
+                .navigationBarsPadding(), // Respect bottom nav bar
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // 2. Minimalist Header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "AutoDroid", // Brand Name
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        ),
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = "AI Agent • Sherpa-ONNX",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary
+                    )
+                }
+                
+                // Settings Icon (Glass)
+                IconButton(
+                    onClick = onOpenSettings,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(GlassLight.copy(alpha=0.1f))
+                        .size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Setting",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            // 3. THE CORE: Living Orb
+            // No more "Power Button". This IS the agent.
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(300.dp)
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = {
+                                if (agentState is AgentState.Running || agentState is AgentState.Listening) {
+                                    viewModel.stopExecution()
+                                } else {
+                                    viewModel.startVoiceRecording()
+                                }
+                            }
+                        )
+                    }
+            ) {
+                com.autoglm.autoagent.ui.components.LivingOrb(
+                    modifier = Modifier.fillMaxSize(),
+                    isActive = isLoading || agentState !is AgentState.Idle,
+                    isListening = isRecording
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(32.dp))
+
+            // 4. Dynamic Status Text
+            AnimatedContent(targetState = agentStatus, label = "status") { status ->
+                 Text(
+                    text = status,
+                    style = MaterialTheme.typography.headlineSmall.copy(
+                        fontWeight = FontWeight.Light
+                    ),
+                    color = TextPrimary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp)
+                )
+            }
+            
             Text(
-                text = "➤",
-                fontSize = 20.sp,
-                color = TextPrimary
+                text = if (isRecording) "点击取消" else "点击圆球开始对话",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary.copy(alpha=0.6f),
+                modifier = Modifier.padding(top = 8.dp)
             )
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            // 5. Floating Action Bar (Bottom)
+            // Replaces the heavy "Card" layout with a sleek floating row
+            Row(
+                modifier = Modifier
+                    .padding(bottom = 32.dp, start = 24.dp, end = 24.dp)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Log Toggle (Mini Glass Pill)
+                com.autoglm.autoagent.ui.components.GlassCard(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(60.dp)
+                        .clickable { viewModel.toggleLogPanel() },
+                    shape = RoundedCornerShape(30.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Default.List, null, tint = PrimaryCyan, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("日志", color = TextPrimary, fontSize = 14.sp)
+                    }
+                }
+                
+                Spacer(modifier = Modifier.width(16.dp))
+                
+                // Keyboard Toggle (Mini Glass Pill)
+                com.autoglm.autoagent.ui.components.GlassCard(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(60.dp)
+                        .clickable { viewModel.toggleTextInput() },
+                    shape = RoundedCornerShape(30.dp)
+                ) {
+                     Row(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Default.Edit, null, tint = PrimaryPurple, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("输入", color = TextPrimary, fontSize = 14.sp)
+                    }
+                }
+            }
+        }
+        
+        // Overlays (Log & Input) - Kept same logic, just ensure they sit on top
+        if (isLogExpanded) {
+             LogSheet(logs = logEntries, onDismiss = { viewModel.toggleLogPanel() })
+        }
+
+        if (showTextInput) {
+             TextInputSheet(
+                 onSend = { 
+                     viewModel.sendMessage(it)
+                     viewModel.toggleTextInput() 
+                 }, 
+                 onDismiss = { viewModel.toggleTextInput() }
+            )
+        }
+    }
+}
+// Dependent sub-components (LogSheet, TextInputSheet, LogItem) remain unchanged...
+// Deleted PowerButton and redundant VoiceControlBar
+
+
+@Composable
+fun LogSheet(logs: List<LogEntry>, onDismiss: () -> Unit) {
+     Box(
+        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha=0.7f)).clickable { onDismiss() },
+        contentAlignment = Alignment.BottomCenter
+    ) {
+         com.autoglm.autoagent.ui.components.GlassCard(
+            modifier = Modifier.fillMaxWidth().height(400.dp).clickable(enabled=false){},
+            shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+            backgroundColor = DarkSurface
+        ) {
+             Column(modifier = Modifier.padding(24.dp)) {
+                 Text("指令历史", style = MaterialTheme.typography.headlineMedium)
+                 Spacer(modifier = Modifier.height(16.dp))
+                  androidx.compose.foundation.lazy.LazyColumn {
+                    items(logs.size) { index ->
+                        LogItem(logs[index])
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+                }
+             }
         }
     }
 }
 
 @Composable
-fun ExpandableLogCard(
-    lastCommand: String,
-    logs: List<LogEntry>,
-    isExpanded: Boolean,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .animateContentSize(),
-        colors = CardDefaults.cardColors(
-            containerColor = CardBackground
-        ),
-        shape = RoundedCornerShape(16.dp)
+fun TextInputSheet(onSend: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf("") }
+     Box(
+        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha=0.7f)).clickable { onDismiss() },
+        contentAlignment = Alignment.BottomCenter,
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
+        com.autoglm.autoagent.ui.components.GlassCard(
+            modifier = Modifier.fillMaxWidth().padding(16.dp).imePadding(), // Handle keyboard
+            backgroundColor = DarkSurface
         ) {
-            if (isExpanded && logs.isNotEmpty()) {
-                // 展开状态 - 显示完整日志
-                Text(
-                    text = "指令历史",
-                    color = TextPrimary,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
-                
-                // 添加滚动支持
-                androidx.compose.foundation.lazy.LazyColumn(
-                    modifier = Modifier.heightIn(max = 300.dp)
-                ) {
-                    items(logs.size) { index ->
-                        LogItem(logs[index])
-                        if (index < logs.size - 1) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                        }
-                    }
-                }
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                TextButton(
-                    onClick = onToggle,
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
-                ) {
-                    Text(
-                        text = "点击收起",
-                        color = PrimaryBlue,
-                        fontSize = 12.sp
-                    )
-                }
-            } else {
-                // 收起状态 - 点击卡片展开
-                TextButton(
-                    onClick = onToggle,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = lastCommand,
-                        color = TextSecondary,
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center
-                    )
-                }
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                 TextField(
+                     value = text, 
+                     onValueChange = { text = it }, 
+                     modifier = Modifier.weight(1f),
+                     colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        focusedTextColor = TextPrimary,
+                         unfocusedTextColor = TextPrimary,
+                     ),
+                     placeholder = { Text("输入指令...", color = TextSecondary) }
+                 )
+                 IconButton(onClick = { if (text.isNotBlank()) onSend(text) }) {
+                     Icon(Icons.Default.Send, null, tint = PrimaryBlue)
+                 }
             }
         }
     }
@@ -535,31 +441,14 @@ fun ExpandableLogCard(
 
 @Composable
 fun LogItem(log: LogEntry) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top
-    ) {
-        // 图标
-        Text(
-            text = if (log.type == LogType.USER_COMMAND) "👤" else "🤖",
-            fontSize = 16.sp,
-            modifier = Modifier.padding(end = 8.dp)
-        )
-        
-        // 内容
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = if (log.type == LogType.USER_COMMAND) "用户指令" else "AI操作",
-                color = if (log.type == LogType.USER_COMMAND) PrimaryBlue else AccentPurple,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium
-            )
-            Text(
+    Row(verticalAlignment = Alignment.Top) {
+        Text(if (log.type == LogType.USER_COMMAND) "👤" else "🤖", modifier = Modifier.padding(end=12.dp))
+        Column {
+             Text(
                 text = log.content,
-                color = TextPrimary,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+                color = if (log.type == LogType.USER_COMMAND) PrimaryBlueLight else TextSecondary,
+                style = MaterialTheme.typography.bodyMedium
+             )
         }
     }
 }

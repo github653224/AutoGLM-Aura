@@ -32,7 +32,9 @@ class MainActivity : ComponentActivity() {
         )
         
         setContent {
-            AutoGLMApp()
+            com.autoglm.autoagent.ui.theme.AutoDroidTheme {
+                AutoGLMApp()
+            }
         }
     }
 }

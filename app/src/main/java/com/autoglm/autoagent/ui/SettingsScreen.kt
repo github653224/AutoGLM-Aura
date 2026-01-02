@@ -1,6 +1,7 @@
 package com.autoglm.autoagent.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -11,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -178,9 +180,7 @@ fun SettingsScreen(
                 title = { 
                     Text(
                         "设置",
-                        color = TextPrimary,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold
+                        style = MaterialTheme.typography.titleLarge
                     ) 
                 },
                 navigationIcon = {
@@ -193,7 +193,8 @@ fun SettingsScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = DarkBackground.copy(alpha = 0.8f)
+                    containerColor = DarkBackground.copy(alpha = 0.8f),
+                    titleContentColor = TextPrimary
                 )
             )
 
@@ -203,7 +204,7 @@ fun SettingsScreen(
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
                 // 权限检查卡片
                 SettingsCard(
@@ -212,32 +213,32 @@ fun SettingsScreen(
                         PermissionItem("无障碍服务", permissionStatus.accessibilityGranted)
                         Text(
                             text = "• 用途: 支持 AI 自动点击、滑动、输入等所有操作",
-                            color = TextHint,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
                             modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
                         )
                         
                         PermissionItem("悬浮窗权限", permissionStatus.overlayGranted)
                         Text(
                             text = "• 用途: 显示悬浮控制按钮，方便随时停止任务",
-                            color = TextHint,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
                             modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
                         )
                         
                         PermissionItem("获取应用列表", permissionStatus.queryPackagesGranted)
                         Text(
                             text = "• 用途: 让 AI 能启动其他应用(如\"打开拼多多\")\n• 若显示未授予，请点击下方按钮进入应用详情页手动开启“获取应用列表”权限",
-                            color = TextHint,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
                             modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
                         )
                         
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         
                         Button(
                             onClick = { viewModel.requestPermissions(context) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = PrimaryBlue
                             ),
@@ -254,9 +255,9 @@ fun SettingsScreen(
                     content = {
                         Text(
                             "选择API提供商",
+                            style = MaterialTheme.typography.labelMedium,
                             color = TextSecondary,
-                            fontSize = 14.sp,
-                            modifier = Modifier.padding(bottom = 8.dp)
+                            modifier = Modifier.padding(bottom = 12.dp)
                         )
                         
                         Row(
@@ -277,7 +278,7 @@ fun SettingsScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(24.dp))
 
                         DarkTextField(
                             value = baseUrl,
@@ -286,7 +287,7 @@ fun SettingsScreen(
                             placeholder = "https://open.bigmodel.cn/api/paas/v4/"
                         )
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
 
                         DarkTextField(
                             value = apiKey,
@@ -308,7 +309,7 @@ fun SettingsScreen(
                             }
                         )
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
 
                         DarkTextField(
                             value = model,
@@ -345,13 +346,12 @@ fun SettingsScreen(
                 ) {
                     Text(
                         "保存设置",
-                        color = TextPrimary,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextPrimary
                     )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(24.dp))
             }
         }
     }
@@ -362,22 +362,17 @@ fun SettingsCard(
     title: String,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = CardBackground
-        ),
-        shape = RoundedCornerShape(16.dp)
+    com.autoglm.autoagent.ui.components.GlassCard(
+        modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(16.dp)
+            modifier = Modifier.padding(24.dp)
         ) {
             Text(
                 text = title,
+                style = MaterialTheme.typography.titleMedium,
                 color = TextPrimary,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(bottom = 12.dp)
+                modifier = Modifier.padding(bottom = 16.dp)
             )
             content()
         }
@@ -395,8 +390,8 @@ fun PermissionItem(name: String, granted: Boolean) {
     ) {
         Text(
             text = name,
-            color = TextSecondary,
-            fontSize = 14.sp
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextPrimary
         )
         Text(
             text = if (granted) "✅" else "❌",
@@ -416,14 +411,15 @@ fun ProviderChip(
         onClick = onClick,
         modifier = modifier.height(48.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (selected) PrimaryBlue else CardBackgroundDark
+            containerColor = if (selected) PrimaryBlue else Color.Transparent
         ),
+        border = if(selected) null else androidx.compose.foundation.BorderStroke(1.dp, GlassLight),
         shape = RoundedCornerShape(12.dp)
     ) {
         Text(
             text = text,
             color = TextPrimary,
-            fontSize = 14.sp
+            style = MaterialTheme.typography.bodyMedium
         )
     }
 }
@@ -440,27 +436,28 @@ fun DarkTextField(
     Column {
         Text(
             text = label,
+            style = MaterialTheme.typography.labelMedium,
             color = TextSecondary,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(bottom = 4.dp)
+            modifier = Modifier.padding(bottom = 8.dp)
         )
         TextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text(placeholder, color = TextHint, fontSize = 14.sp) },
+            modifier = Modifier.fillMaxWidth().border(1.dp, GlassLight.copy(alpha=0.2f), RoundedCornerShape(12.dp)),
+            placeholder = { Text(placeholder, color = TextHint, style = MaterialTheme.typography.bodyMedium) },
             visualTransformation = visualTransformation,
             trailingIcon = trailingIcon,
             colors = TextFieldDefaults.colors(
-                focusedContainerColor = CardBackgroundDark,
-                unfocusedContainerColor = CardBackgroundDark,
+                focusedContainerColor = Color.Transparent,
+                unfocusedContainerColor = Color.Transparent,
                 focusedTextColor = TextPrimary,
                 unfocusedTextColor = TextPrimary,
                 cursorColor = PrimaryBlue,
                 focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
                 unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
             ),
-            shape = RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(12.dp),
+            textStyle = MaterialTheme.typography.bodyMedium
         )
     }
 }
@@ -475,13 +472,13 @@ fun InfoRow(label: String, value: String) {
     ) {
         Text(
             text = label,
-            color = TextSecondary,
-            fontSize = 14.sp
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextSecondary
         )
         Text(
             text = value,
-            color = TextPrimary,
-            fontSize = 14.sp
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextPrimary
         )
     }
 }

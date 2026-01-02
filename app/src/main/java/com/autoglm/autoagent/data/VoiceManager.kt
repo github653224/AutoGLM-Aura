@@ -64,15 +64,32 @@ class VoiceManager @Inject constructor(
         }
     }
 
+    @Synchronized
     fun stopListening() {
+        if (audioRecord == null) return
+        
         isRecording = false
-        audioRecord?.stop()
-        audioRecord?.release()
-        audioRecord = null
-        _voiceState.value = VoiceState.Idle
+        try {
+            if (audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
+                audioRecord?.stop()
+            }
+        } catch (e: IllegalStateException) {
+            Log.w("VoiceManager", "Error stopping AudioRecord: ${e.message}")
+        } catch (e: Exception) {
+            Log.e("VoiceManager", "Exception during stop", e)
+        } finally {
+            try {
+                audioRecord?.release()
+            } catch (e: Exception) {
+                Log.e("VoiceManager", "Error releasing AudioRecord", e)
+            }
+            audioRecord = null
+            _voiceState.value = VoiceState.Idle
+        }
     }
 
     private fun startRecording() {
+        stopListening() // Ensure clean state
         try {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) 
                 != PackageManager.PERMISSION_GRANTED) {
@@ -118,82 +135,125 @@ class VoiceManager @Inject constructor(
         } catch (e: Exception) {
             Log.e("VoiceManager", "Failed to start recording", e)
             _voiceState.value = VoiceState.Error("Failed to start: ${e.message}")
+            stopListening()
         }
     }
 
     private suspend fun processAudioOffline() {
-        val shortBuffer = ShortArray(3200)
+        val shortBuffer = ShortArray(1600) // 0.1s chunk
         val currentRecognizer = recognizer ?: return
         val currentStream = stream ?: return
 
         val startTime = System.currentTimeMillis()
-        val maxRecordingMs = 5000L  // 最多录5秒
+        val maxRecordingMs = 8000L 
+
+        var hasReceivedAudio = false // Track local audio state
 
         try {
             var silenceCount = 0
-            val maxSilenceFrames = 30  // 约1秒静音
+            val maxSilenceFrames = 20 // 2s
 
             while (isRecording) {
-                // 超时自动停止
+                // Double check if cleared externally
+                if (audioRecord == null) break
+
                 if (System.currentTimeMillis() - startTime > maxRecordingMs) {
-                    Log.d("VoiceManager", "Recording timeout, stopping...")
+                    Log.d("VoiceManager", "Recording timeout")
                     break
                 }
 
-                val read = audioRecord?.read(shortBuffer, 0, shortBuffer.size) ?: 0
+                val read = audioRecord?.read(shortBuffer, 0, shortBuffer.size) ?: -1
                 if (read > 0) {
                     val floatBuffer = FloatArray(read)
-                    var hasSound = false
+                    var currentMaxAmp = 0
                     
                     for (i in 0 until read) {
                         floatBuffer[i] = shortBuffer[i] / 32768.0f
-                        // 检测音量
-                        if (Math.abs(shortBuffer[i].toInt()) > 500) {
-                            hasSound = true
-                        }
+                        val amp = Math.abs(shortBuffer[i].toInt())
+                        if (amp > currentMaxAmp) currentMaxAmp = amp
                     }
                     
+                    // Accept waveform every chunk
                     currentStream.acceptWaveform(floatBuffer, 16000)
+                    hasReceivedAudio = true
                     
-                    // 静音检测
-                    if (hasSound) {
+                    // Simple VAD
+                    if (currentMaxAmp > 800) {
                         silenceCount = 0
                     } else {
                         silenceCount++
-                        if (silenceCount > maxSilenceFrames) {
-                            Log.d("VoiceManager", "Silence detected, stopping...")
-                            break
+                        if (silenceCount > maxSilenceFrames && System.currentTimeMillis() - startTime > 1000) {
+                             Log.d("VoiceManager", "Silence detected")
+                             break
                         }
                     }
+                } else if (read < 0) {
+                    Log.e("VoiceManager", "Audio read error: $read")
+                    break
                 }
             }
-
-            // 停止录音
+            
+            // Critical: Don't call stopListening() here if loop exited due to isRecording=false
+            // But we must decoding.
+            // Safest pattern: Just stop audio now.
             stopListening()
 
-            // 执行识别
-            currentRecognizer.decode(currentStream)
-            val result = currentRecognizer.getResult(currentStream)
-            
-            if (result.text.isNotBlank()) {
-                Log.d("VoiceManager", "Recognition result: ${result.text}")
-                withContext(Dispatchers.Main) {
-                    onResultCallback?.invoke(result.text)
-                }
-            } else {
-                Log.d("VoiceManager", "No speech detected")
-                withContext(Dispatchers.Main) {
-                    _voiceState.value = VoiceState.Error("未检测到语音")
+            if (hasReceivedAudio) {
+                currentRecognizer.decode(currentStream)
+                val result = currentRecognizer.getResult(currentStream)
+                
+                if (result.text.isNotBlank()) {
+                    Log.d("VoiceManager", "Recognition result: ${result.text}")
+                    withContext(Dispatchers.Main) {
+                        onResultCallback?.invoke(result.text)
+                    }
+                } else {
+                     withContext(Dispatchers.Main) {
+                        _voiceState.value = VoiceState.Error("未听到声音")
+                     }
                 }
             }
         } catch (e: Exception) {
-            Log.e("VoiceManager", "Recognition failed", e)
-            withContext(Dispatchers.Main) {
-                _voiceState.value = VoiceState.Error("识别失败: ${e.message}")
+            Log.e("VoiceManager", "Recognition process failed", e)
+             withContext(Dispatchers.Main) {
+                _voiceState.value = VoiceState.Error("识别出错")
             }
         } finally {
             stream?.release()
             stream = null
+        }
+    }
+
+    @Synchronized
+    fun cancelListening() {
+        if (audioRecord == null) return
+        
+        isRecording = false
+        // Just stop and release, do NOT invoke callback or decode
+        try {
+            if (audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
+                audioRecord?.stop()
+            }
+        } catch (e: Exception) {
+            Log.e("VoiceManager", "Error canceling AudioRecord", e)
+        } finally {
+            try {
+                audioRecord?.release()
+            } catch (e: Exception) {
+                Log.e("VoiceManager", "Error releasing AudioRecord", e)
+            }
+            audioRecord = null
+            _voiceState.value = VoiceState.Idle
+            Log.d("VoiceManager", "Listening Canceled")
+        }
+    }
+
+    // Public method to preload model
+    fun preloadModel() {
+        if (recognizer == null && _voiceState.value !is VoiceState.Initializing) {
+            scope.launch {
+                initModel()
+            }
         }
     }
 

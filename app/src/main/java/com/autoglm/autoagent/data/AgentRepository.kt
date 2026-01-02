@@ -119,6 +119,19 @@ class AgentRepository @Inject constructor(
             addUiMessage("system", "Agent Resumed.")
         }
     }
+
+    fun cancelListening() {
+        voiceManager.cancelListening()
+        if (_agentState.value == AgentState.Listening) {
+             _agentState.value = AgentState.Idle
+        }
+    }
+    
+    fun preloadVoiceModel() {
+        repositoryScope.launch {
+            voiceManager.preloadModel()
+        }
+    }
     
     private val _agentState = MutableStateFlow<AgentState>(AgentState.Idle)
     val agentState = _agentState.asStateFlow()
