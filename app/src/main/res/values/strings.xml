@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">智灵助手</string>
+    <string name="accessibility_service_label">智灵助手</string>
+    <string name="accessibility_service_desc">基于智谱 GLM 开源模型的 AI 智能助手,可在用户授权下执行手机端自动化操作,如应用打开、界面点击、滑动与输入等,用于提升日常操作效率\n\n提示:辅助功能仅用于实现自动化任务执行 </string>
+</resources>

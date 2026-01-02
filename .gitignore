@@ -1,0 +1,42 @@
+# Android
+*.apk
+*.ap_
+*.aab
+
+# Build
+/build
+/app/build
+/.gradle
+/local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# AAR and Models (太大,不上传)
+app/libs/*.aar
+app/src/main/assets/sherpa-*
+
+# Gradle
+.gradle/
+gradle/
+gradlew
+gradlew.bat
+
+# Keystore
+*.jks
+*.keystore
+
+# NDK
+obj/
+.externalNativeBuild
+.cxx/
+
+# Generated
+captures/
+.navigation/
+output.json
+
+# Local configuration
+local.properties
