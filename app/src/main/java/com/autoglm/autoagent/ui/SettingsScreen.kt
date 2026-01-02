@@ -324,7 +324,7 @@ fun SettingsScreen(
                     title = "ℹ️ 关于",
                     content = {
                         InfoRow("版本", "1.0.0")
-                        InfoRow("项目", "AutoGLM")
+                        InfoRow("项目", "AutoDroid")
                         InfoRow("开源", "GitHub")
                     }
                 )

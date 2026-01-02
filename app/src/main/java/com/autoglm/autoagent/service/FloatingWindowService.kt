@@ -32,6 +32,8 @@ class FloatingWindowService : Service() {
     private lateinit var layoutParams: WindowManager.LayoutParams
     
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val vibrationHelper by lazy { VibrationHelper(this) }
+    private val prefs by lazy { getSharedPreferences("floating_window_prefs", MODE_PRIVATE) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -44,21 +46,27 @@ class FloatingWindowService : Service() {
 
     private fun createFloatingView() {
         val imageView = ImageView(this)
-        // Default State (Will be updated by observer)
-        imageView.setImageResource(com.autoglm.autoagent.R.drawable.ic_stop_glass) 
-        // 彻底移除背景,实现纯图标悬浮
-        imageView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-        imageView.setPadding(0, 0, 0, 0) 
+        imageView.setImageResource(com.autoglm.autoagent.R.drawable.ic_mic_glass)
         
-        // ... (Listeners remain same)
-        // IMPLEMENT DRAGGING AND CLICK HANDLING VIA ONTOUCHLISTENER
+        // 1. 设置圆型半透明背景
+        val background = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL
+            setColor(android.graphics.Color.parseColor("#99000000")) // 半透明黑色
+            setStroke(2, android.graphics.Color.parseColor("#40FFFFFF")) // 微弱白边
+        }
+        imageView.background = background
         
+        // 2. 设置内边距,让图标在圆圈中间
+        val padding = dpToPx(12)
+        imageView.setPadding(padding, padding, padding, padding)
+        
+        // 触摸监听逻辑
         var initialX = 0
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
         var isDragging = false
-        val touchSlop = 10 // Threshold to detect drag vs click
+        val touchSlop = 10 
 
         imageView.setOnTouchListener { view, event ->
             when (event.action) {
@@ -68,6 +76,7 @@ class FloatingWindowService : Service() {
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     isDragging = false
+                    view.alpha = 0.8f // 按下时稍微变暗
                     true
                 }
                 android.view.MotionEvent.ACTION_MOVE -> {
@@ -83,9 +92,14 @@ class FloatingWindowService : Service() {
                     true
                 }
                 android.view.MotionEvent.ACTION_UP -> {
+                    view.alpha = 1.0f // 抬起恢复
                     if (!isDragging) {
-                        // IT WAS A CLICK
                         view.performClick()
+                    } else {
+                        // 自动贴边
+                        snapToEdge()
+                        // 保存位置
+                        savePosition()
                     }
                     true
                 }
@@ -93,7 +107,6 @@ class FloatingWindowService : Service() {
             }
         }
 
-        // Logic handled in performClick via OnClickListener
         imageView.setOnClickListener {
             val state = agentRepository.agentState.value
             when (state) {
@@ -116,14 +129,12 @@ class FloatingWindowService : Service() {
             }
         }
         
-        // REMOVED Long Press to Close (As per user feedback)
-
-        
-        // ... Listeners set previously ...
+        // 3. 固定大小 (60dp), 避免过大遮挡
+        val size = dpToPx(60)
         
         layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            size,
+            size,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             } else {
@@ -135,17 +146,18 @@ class FloatingWindowService : Service() {
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
-            // Remove alpha on the window itself, let the view handle alpha/transparency
-            // If we set window alpha, the whole icon becomes ghost-like
-            // But user wanted transparency... let's keep it 1.0f for the window and handle it in the view if needed
-            // 图标本身已有透明度或设计,窗口 alpha 设为 1.0 避免重叠变淡
             alpha = 1.0f 
             gravity = Gravity.TOP or Gravity.START
-            x = 0
-            y = 200
+            // 恢复上次位置
+            x = prefs.getInt("last_x", 0)
+            y = prefs.getInt("last_y", 200)
         }
         floatView = imageView
         windowManager?.addView(floatView, layoutParams)
+    }
+
+    private fun dpToPx(dp: Int): Int {
+        return (dp * resources.displayMetrics.density).toInt()
     }
 
     private fun observeAgentState() {
@@ -153,23 +165,94 @@ class FloatingWindowService : Service() {
             agentRepository.agentState.collectLatest { state ->
                 val view = floatView as? ImageView ?: return@collectLatest
                 
-                // 移除此处强制设置的背景
-                view.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                
+                // 4. 状态颜色逻辑
                 when (state) {
                     is AgentState.Idle, is AgentState.Error -> {
                         view.setImageResource(com.autoglm.autoagent.R.drawable.ic_mic_glass)
+                        view.colorFilter = null // 默认颜色
+                        view.background.setTintList(null) // 恢复背景色
                     }
                     is AgentState.Listening -> {
                         view.setImageResource(com.autoglm.autoagent.R.drawable.ic_mic_glass)
+                        view.colorFilter = null
+                        if (state != lastState) vibrationHelper.vibrateTick()
                     }
                     is AgentState.Paused -> {
-                        view.setImageResource(com.autoglm.autoagent.R.drawable.ic_keyboard_glass)
+                        // 暂停状态 -> 显示播放/继续 -> 绿色
+                        view.setImageResource(com.autoglm.autoagent.R.drawable.ic_keyboard_glass) 
+                        view.setColorFilter(android.graphics.Color.GREEN, android.graphics.PorterDuff.Mode.SRC_IN)
                     }
                     is AgentState.Running, is AgentState.Planning -> {
+                        // 运行状态 -> 显示停止 -> 红色
                         view.setImageResource(com.autoglm.autoagent.R.drawable.ic_stop_glass)
+                        view.setColorFilter(android.graphics.Color.RED, android.graphics.PorterDuff.Mode.SRC_IN)
+                        if (state != lastState) vibrationHelper.vibrateHeavy()
                     }
                 }
+                lastState = state
+            }
+        }
+    }
+
+    private var lastState: AgentState? = null
+
+    private fun snapToEdge() {
+        val displayMetrics = resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val centerX = screenWidth / 2
+        
+        // 判断是在左边还是右边
+        val targetX = if (layoutParams.x + floatView!!.width / 2 < centerX) {
+            0 // 吸附到左边
+        } else {
+            screenWidth - floatView!!.width // 吸附到右边
+        }
+
+        // 简单的动画效果 (使用 ValueAnimator)
+        val animator = android.animation.ValueAnimator.ofInt(layoutParams.x, targetX)
+        animator.duration = 300
+        animator.addUpdateListener { animation ->
+            layoutParams.x = animation.animatedValue as Int
+            windowManager?.updateViewLayout(floatView, layoutParams)
+        }
+        animator.start()
+        
+        // 更新 params 为目标位置 (主要用于保存)
+        layoutParams.x = targetX
+    }
+
+    private fun savePosition() {
+        prefs.edit()
+            .putInt("last_x", layoutParams.x)
+            .putInt("last_y", layoutParams.y)
+            .apply()
+    }
+    
+    // 简单的震动帮助类
+    class VibrationHelper(private val context: android.content.Context) {
+        private val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val manager = context.getSystemService(android.content.Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager
+            manager.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as android.os.Vibrator
+        }
+
+        fun vibrateTick() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                vibrator.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_TICK))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(20)
+            }
+        }
+        
+        fun vibrateHeavy() {
+             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                vibrator.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(50)
             }
         }
     }
