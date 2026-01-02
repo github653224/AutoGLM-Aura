@@ -20,6 +20,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import android.app.Application
+import android.app.Activity
+import android.os.Bundle
 
 @AndroidEntryPoint
 class FloatingWindowService : Service() {
@@ -34,6 +37,37 @@ class FloatingWindowService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val vibrationHelper by lazy { VibrationHelper(this) }
     private val prefs by lazy { getSharedPreferences("floating_window_prefs", MODE_PRIVATE) }
+    
+    private var isAppInForeground = false
+    private var isTaskRunning = false
+    
+    private val lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
+        private var activityCount = 0
+        
+        override fun onActivityStarted(activity: Activity) {
+            activityCount++
+            if (activityCount == 1) {
+                // App entered foreground
+                isAppInForeground = true
+                updateFloatViewVisibility()
+            }
+        }
+        
+        override fun onActivityStopped(activity: Activity) {
+            activityCount--
+            if (activityCount == 0) {
+                // App entered background
+                isAppInForeground = false
+                updateFloatViewVisibility()
+            }
+        }
+        
+        override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+        override fun onActivityResumed(activity: Activity) {}
+        override fun onActivityPaused(activity: Activity) {}
+        override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+        override fun onActivityDestroyed(activity: Activity) {}
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -42,6 +76,9 @@ class FloatingWindowService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         createFloatingView()
         observeAgentState()
+        
+        // Register lifecycle callbacks
+        (application as Application).registerActivityLifecycleCallbacks(lifecycleCallbacks)
     }
 
     private fun createFloatingView() {
@@ -165,6 +202,10 @@ class FloatingWindowService : Service() {
             agentRepository.agentState.collectLatest { state ->
                 val view = floatView as? ImageView ?: return@collectLatest
                 
+                // Update task running status
+                isTaskRunning = state is AgentState.Running || state is AgentState.Planning || state is AgentState.Listening
+                updateFloatViewVisibility()
+                
                 // 4. 状态颜色逻辑
                 when (state) {
                     is AgentState.Idle, is AgentState.Error -> {
@@ -192,6 +233,17 @@ class FloatingWindowService : Service() {
                 lastState = state
             }
         }
+    }
+    
+    private fun updateFloatViewVisibility() {
+        val view = floatView ?: return
+        
+        // Show if: app in background OR task is running
+        // Hide if: app in foreground AND idle
+        val shouldShow = !isAppInForeground || isTaskRunning
+        
+        view.visibility = if (shouldShow) View.VISIBLE else View.GONE
+        android.util.Log.d("FloatingWindow", "Visibility: inForeground=$isAppInForeground, taskRunning=$isTaskRunning, show=$shouldShow")
     }
 
     private var lastState: AgentState? = null
@@ -239,20 +291,28 @@ class FloatingWindowService : Service() {
         }
 
         fun vibrateTick() {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                vibrator.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_TICK))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator.vibrate(20)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    vibrator.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_TICK))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(20)
+                }
+            } catch (e: SecurityException) {
+                android.util.Log.e("FloatingWindow", "振动权限缺失，跳过震动反馈")
             }
         }
         
         fun vibrateHeavy() {
-             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                vibrator.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator.vibrate(50)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    vibrator.vibrate(android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(50)
+                }
+            } catch (e: SecurityException) {
+                android.util.Log.e("FloatingWindow", "振动权限缺失，跳过震动反馈")
             }
         }
     }
@@ -261,5 +321,8 @@ class FloatingWindowService : Service() {
         super.onDestroy()
         serviceScope.cancel()
         if (floatView != null) windowManager?.removeView(floatView)
+        
+        // Unregister lifecycle callbacks
+        (application as? Application)?.unregisterActivityLifecycleCallbacks(lifecycleCallbacks)
     }
 }

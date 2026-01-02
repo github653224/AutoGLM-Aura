@@ -133,11 +133,16 @@ class ScreenCaptureService : Service() {
         }
 
         try {
-            var image = imageReader?.acquireLatestImage()
+            val image = imageReader?.acquireLatestImage()
             if (image == null) {
                  Handler(Looper.getMainLooper()).postDelayed({
-                     val retryImg = imageReader?.acquireLatestImage()
-                     processImage(retryImg, cont)
+                     try {
+                         val retryImg = imageReader?.acquireLatestImage()
+                         processImage(retryImg, cont)
+                     } catch (e: Exception) {
+                         Log.e("ScreenCapture", "Error acquiring retry image", e)
+                         cont.resume(null)
+                     }
                  }, 100)
             } else {
                 processImage(image, cont)
@@ -166,31 +171,38 @@ class ScreenCaptureService : Service() {
         
         CoroutineScope(Dispatchers.Default).launch {
             var finalBitmap: Bitmap? = null
+            var rawBitmap: Bitmap? = null
+            var imageWidth = 0
+            var imageHeight = 0
+            
             try {
+                // Extract all needed data from Image first
                 val planes = image.planes
                 val buffer = planes[0].buffer
                 val pixelStride = planes[0].pixelStride
                 val rowStride = planes[0].rowStride
                 val rowPadding = rowStride - pixelStride * image.width
+                imageWidth = image.width
+                imageHeight = image.height
 
                 // Create bitmap from buffer (this is the raw copy)
-                // Note: We cannot easily recycle this one immediately if we create it from buffer wrapping? 
-                // Actually createBitmap from colors/buffer creates a mutable copy usually.
-                val rawBitmap = Bitmap.createBitmap(
-                    image.width + rowPadding / pixelStride,
-                    image.height, Bitmap.Config.ARGB_8888
+                rawBitmap = Bitmap.createBitmap(
+                    imageWidth + rowPadding / pixelStride,
+                    imageHeight, Bitmap.Config.ARGB_8888
                 )
                 rawBitmap.copyPixelsFromBuffer(buffer)
                 
-                // Close image immediately to free surface buffer
+                // CRITICAL: Close image immediately after copying buffer
+                // This releases the HardwareBuffer and prevents GPU memory leak
                 image.close()
 
                 // Remove padding (stride mismatch)
-                finalBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, image.width, image.height)
+                finalBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, imageWidth, imageHeight)
                 
                 // Raw bitmap is no longer needed after cropping
                 if (rawBitmap != finalBitmap) {
                     rawBitmap.recycle()
+                    rawBitmap = null  // Clear reference
                 }
 
                 val stream = ByteArrayOutputStream()
@@ -201,13 +213,17 @@ class ScreenCaptureService : Service() {
                 val bytes = stream.toByteArray()
                 val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 
-                // Return screenshot with actual dimensions from image
-                cont.resume(ScreenshotData(base64, image.width, image.height))
+                // Return screenshot with actual dimensions
+                cont.resume(ScreenshotData(base64, imageWidth, imageHeight))
             } catch(e: Exception) {
-                e.printStackTrace()
+                Log.e("ScreenCapture", "Error processing image", e)
+                // Make sure image is closed even on exception
+                try { image.close() } catch (ignored: Exception) {}
                 cont.resume(null)
             } finally {
+                // Clean up bitmaps
                 finalBitmap?.recycle()
+                rawBitmap?.recycle()
             }
         }
     }

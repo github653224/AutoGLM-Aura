@@ -20,6 +20,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -64,6 +69,41 @@ class HomeViewModel @Inject constructor(
     init {
         // Preload voice model on ViewModel creation
         agentRepository.preloadVoiceModel()
+        
+        // Auto-run Diagnostics
+        checkAccessibilityStatus()
+    }
+    
+    fun checkAccessibilityStatus() {
+        // 1. Check System Settings
+        val serviceId = "${context.packageName}/com.autoglm.autoagent.service.AutoAgentService"
+        val enabledServices = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: ""
+        val isSystemEnabled = enabledServices.contains(serviceId)
+        
+        // 2. Check Actual Service Connection (Instance)
+        val isServiceConnected = com.autoglm.autoagent.service.AutoAgentService.instance != null
+        
+        agentRepository.addMessage("system", "🔍 系统自检报告 (System Report)")
+        
+        if (isSystemEnabled) {
+            agentRepository.addMessage("system", "✅ [系统开关] 已开启 (Settings: Enabled)")
+        } else {
+             agentRepository.addMessage("system", "❌ [系统开关] 未开启 (请去设置打开)")
+        }
+        
+        if (isServiceConnected) {
+             agentRepository.addMessage("system", "✅ [服务连接] 正常 (Service Connected)")
+        } else {
+             if (isSystemEnabled) {
+                 agentRepository.addMessage("system", "⚠️ [服务连接] 异常！(系统已开但服务未连)")
+                 agentRepository.addMessage("system", "💡 建议: 请尝试关闭无障碍再重新打开，或重启设备。")
+             } else {
+                 agentRepository.addMessage("system", "❌ [服务连接] 断开 (等待开启)")
+             }
+        }
     }
     
     // 监听AgentRepository的消息
@@ -227,7 +267,7 @@ fun HomeScreen(
             ) {
                 Column {
                     Text(
-                        text = "AutoDroid", // Brand Name
+                        text = "智灵助手", // Brand Name
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 1.sp
@@ -235,7 +275,7 @@ fun HomeScreen(
                         color = TextPrimary
                     )
                     Text(
-                        text = "AI Agent • Sherpa-ONNX",
+                        text = "Hands-free AI Agent, built on Open-AutoGLM",
                         style = MaterialTheme.typography.labelSmall,
                         color = TextSecondary
                     )
@@ -262,12 +302,35 @@ fun HomeScreen(
 
             // 3. THE CORE: Living Orb
             // No more "Power Button". This IS the agent.
+            var isOrbPressed by remember { mutableStateOf(false) }
+            
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .size(300.dp)
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Button
+                        contentDescription = if (agentState is AgentState.Running || agentState is AgentState.Listening) {
+                            "停止执行"
+                        } else {
+                            "开始语音识别"
+                        }
+                        onClick {
+                            if (agentState is AgentState.Running || agentState is AgentState.Listening) {
+                                viewModel.stopExecution()
+                            } else {
+                                viewModel.startVoiceRecording()
+                            }
+                            true
+                        }
+                    }
                     .pointerInput(Unit) {
                         detectTapGestures(
+                            onPress = {
+                                isOrbPressed = true
+                                tryAwaitRelease()
+                                isOrbPressed = false
+                            },
                             onTap = {
                                 if (agentState is AgentState.Running || agentState is AgentState.Listening) {
                                     viewModel.stopExecution()
@@ -281,7 +344,8 @@ fun HomeScreen(
                 com.autoglm.autoagent.ui.components.LivingOrb(
                     modifier = Modifier.fillMaxSize(),
                     isActive = isLoading || agentState !is AgentState.Idle,
-                    isListening = isRecording
+                    isListening = isRecording,
+                    isPressed = isOrbPressed
                 )
             }
             
@@ -289,22 +353,55 @@ fun HomeScreen(
 
             // 4. Dynamic Status Text
             AnimatedContent(targetState = agentStatus, label = "status") { status ->
-                 Text(
-                    text = status,
-                    style = MaterialTheme.typography.headlineSmall.copy(
-                        fontWeight = FontWeight.Light
-                    ),
-                    color = TextPrimary,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp)
-                )
+            // 4. Status Text with Animated Ellipsis
+            Box(
+                 modifier = Modifier
+                     .padding(top = 24.dp, start = 24.dp, end = 24.dp)
+                     .heightIn(min = 40.dp, max = 120.dp),
+                 contentAlignment = Alignment.Center
+            ) {
+                 val baseText = if (status.endsWith("...")) status.dropLast(3) else status
+                 val shouldAnimate = status.endsWith("...")
+                 
+                 if (shouldAnimate) {
+                     val infiniteTransition = rememberInfiniteTransition(label = "dots")
+                     val dotCount by infiniteTransition.animateValue(
+                         initialValue = 0,
+                         targetValue = 4, // 0, 1, 2, 3
+                         typeConverter = Int.VectorConverter,
+                         animationSpec = infiniteRepeatable(
+                             animation = tween(1500, easing = LinearEasing),
+                             repeatMode = RepeatMode.Restart
+                         ),
+                         label = "dot_count"
+                     )
+                     
+                     Text(
+                        text = "$baseText${".".repeat(dotCount)}",
+                        style = MaterialTheme.typography.headlineSmall.copy(
+                            fontWeight = FontWeight.Light
+                        ),
+                        color = TextPrimary,
+                        textAlign = TextAlign.Center
+                    )
+                 } else {
+                     Text(
+                        text = status,
+                        style = MaterialTheme.typography.headlineSmall.copy(
+                            fontWeight = FontWeight.Light
+                        ),
+                        color = TextPrimary,
+                        textAlign = TextAlign.Center
+                    )
+                 }
+            }
             }
             
             Text(
                 text = if (isRecording) "点击取消" else "点击圆球开始对话",
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary.copy(alpha=0.6f),
-                modifier = Modifier.padding(top = 8.dp)
+                modifier = Modifier.padding(top = 0.dp)
             )
 
             Spacer(modifier = Modifier.weight(1f))
@@ -317,43 +414,67 @@ fun HomeScreen(
                     .fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Log Toggle (Mini Glass Pill)
+                // Log Toggle (Subtle Frosted Glass)
                 com.autoglm.autoagent.ui.components.GlassCard(
                     modifier = Modifier
                         .weight(1f)
-                        .height(60.dp)
+                        .height(60.dp) // Standard sleek height
                         .clickable { viewModel.toggleLogPanel() },
-                    shape = RoundedCornerShape(30.dp)
+                    shape = RoundedCornerShape(30.dp),
+                    backgroundColor = Color.White.copy(alpha = 0.05f), // Very subtle frost
+                    borderColor = Color.White.copy(alpha = 0.15f)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxSize(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        Icon(Icons.Default.List, null, tint = PrimaryCyan, modifier = Modifier.size(20.dp))
+                        Icon(
+                            imageVector = Icons.Filled.List, 
+                            contentDescription = null, 
+                            tint = PrimaryCyan.copy(alpha = 0.8f), 
+                            modifier = Modifier.size(20.dp) // Standard Size
+                        )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("日志", color = TextPrimary, fontSize = 14.sp)
+                        Text(
+                            text = "日志", 
+                            color = TextPrimary.copy(alpha = 0.9f), 
+                            fontSize = 14.sp, // Standard Size
+                            fontWeight = FontWeight.Normal
+                        )
                     }
                 }
                 
                 Spacer(modifier = Modifier.width(16.dp))
                 
-                // Keyboard Toggle (Mini Glass Pill)
+                // Keyboard Toggle (Subtle Frosted Glass)
                 com.autoglm.autoagent.ui.components.GlassCard(
                     modifier = Modifier
                         .weight(1f)
-                        .height(60.dp)
+                        .height(60.dp) // Standard sleek height
                         .clickable { viewModel.toggleTextInput() },
-                    shape = RoundedCornerShape(30.dp)
+                    shape = RoundedCornerShape(30.dp),
+                    backgroundColor = Color.White.copy(alpha = 0.05f), // Very subtle frost
+                    borderColor = Color.White.copy(alpha = 0.15f)
                 ) {
                      Row(
                         modifier = Modifier.fillMaxSize(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        Icon(Icons.Default.Edit, null, tint = PrimaryPurple, modifier = Modifier.size(20.dp))
+                        Icon(
+                            imageVector = Icons.Filled.Edit, 
+                            contentDescription = null, 
+                            tint = PrimaryPurple.copy(alpha = 0.8f), 
+                            modifier = Modifier.size(20.dp) // Standard Size
+                        )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("输入", color = TextPrimary, fontSize = 14.sp)
+                        Text(
+                            text = "输入", 
+                            color = TextPrimary.copy(alpha = 0.9f), 
+                            fontSize = 14.sp, // Standard Size
+                            fontWeight = FontWeight.Normal
+                        )
                     }
                 }
             }

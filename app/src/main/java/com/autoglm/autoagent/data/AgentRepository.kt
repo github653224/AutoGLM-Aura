@@ -50,6 +50,9 @@ class AgentRepository @Inject constructor(
     
     // Scope for launching tasks from voice callback
     private val repositoryScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
+    
+    // Job to track current running task for immediate cancellation
+    private var currentTaskJob: kotlinx.coroutines.Job? = null
 
     fun setListening(isListening: Boolean) {
         if (isListening) {
@@ -85,7 +88,7 @@ class AgentRepository @Inject constructor(
             voiceManager.startListening { text ->
                 Log.d("AgentRepository", "Voice Command: $text")
                 _agentState.value = AgentState.Idle 
-                repositoryScope.launch {
+                currentTaskJob = repositoryScope.launch {
                     executeTask(text)
                 }
             }
@@ -410,6 +413,14 @@ class AgentRepository @Inject constructor(
                 }
             }
         } catch (e: Exception) {
+            // Handle normal cancellation separately - not an error
+            if (e is kotlinx.coroutines.CancellationException) {
+                Log.d("Agent", "Task cancelled by user")
+                addUiMessage("system", "任务已取消")
+                _agentState.value = AgentState.Idle
+                return
+            }
+            
             e.printStackTrace()
             val errorMsg = when (e) {
                 is IOException -> "网络连接失败，请检查网络设置"
@@ -418,7 +429,7 @@ class AgentRepository @Inject constructor(
             _agentState.value = AgentState.Error(errorMsg)
             addUiMessage("system", "Error: $errorMsg")
             delay(TimingConfig.Task.ERROR_DELAY)
-            stopAgent()
+            _agentState.value = AgentState.Idle
         }
     }
 
@@ -755,8 +766,17 @@ class AgentRepository @Inject constructor(
     }
 
     fun stopAgent() {
+        // Immediately cancel running task
+        currentTaskJob?.cancel()
+        currentTaskJob = null
+        
+        // Stop listening if active
+        voiceManager.cancelListening()
+        
+        // Set state to idle
         _agentState.value = AgentState.Idle
-        context.stopService(Intent(context, FloatingWindowService::class.java))
+        
+        android.util.Log.d("Agent", "Task stopped, floating window remains active")
     }
     
     private fun checkDuplicate(type: String, x: Int, y: Int): Boolean {
@@ -780,10 +800,14 @@ class AgentRepository @Inject constructor(
         sameTapCount = 0
     }
 
-    private fun addUiMessage(role: String, content: String) {
+    fun addMessage(role: String, content: String) {
         val current = _chatMessages.value.toMutableList()
         current.add(ChatMessage(role, content))
         _chatMessages.value = current
+    }
+
+    private fun addUiMessage(role: String, content: String) {
+        addMessage(role, content)
     }
     
     /**

@@ -19,6 +19,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -142,10 +145,21 @@ fun SettingsScreen(
     val permissionStatus by viewModel.permissionStatus.collectAsState()
     val context = LocalContext.current
     
-    // 进入设置页时自动检测权限
-    LaunchedEffect(Unit) {
-        viewModel.checkPermissions(context)
+    
+    // 监听生命周期，每次返回设置页都重新检查权限
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.checkPermissions(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
+    
     
     if (config == null) return
 

@@ -145,20 +145,20 @@ class VoiceManager @Inject constructor(
         val currentStream = stream ?: return
 
         val startTime = System.currentTimeMillis()
-        val maxRecordingMs = 8000L 
+        val maxRecordingMs = 60000L // Increased to 600s
 
         var hasReceivedAudio = false // Track local audio state
 
         try {
             var silenceCount = 0
-            val maxSilenceFrames = 20 // 2s
+            val maxSilenceFrames = 25 // Increased to 2.5s silence to trigger stop
 
             while (isRecording) {
                 // Double check if cleared externally
                 if (audioRecord == null) break
 
                 if (System.currentTimeMillis() - startTime > maxRecordingMs) {
-                    Log.d("VoiceManager", "Recording timeout")
+                    Log.d("VoiceManager", "Recording timeout (600s)")
                     break
                 }
 
@@ -182,8 +182,8 @@ class VoiceManager @Inject constructor(
                         silenceCount = 0
                     } else {
                         silenceCount++
-                        if (silenceCount > maxSilenceFrames && System.currentTimeMillis() - startTime > 1000) {
-                             Log.d("VoiceManager", "Silence detected")
+                        if (silenceCount > maxSilenceFrames && System.currentTimeMillis() - startTime > 1500) { // Check after 1.5s min
+                             Log.d("VoiceManager", "Silence detected (End of Speech)")
                              break
                         }
                     }
