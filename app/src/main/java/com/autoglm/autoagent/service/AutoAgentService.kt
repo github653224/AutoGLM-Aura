@@ -11,12 +11,15 @@ import android.view.accessibility.AccessibilityNodeInfo
 import java.io.ByteArrayOutputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+import kotlinx.coroutines.*
 
 class AutoAgentService : AccessibilityService() {
 
     companion object {
         var instance: AutoAgentService? = null
     }
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     var currentPackageName: String = ""
         private set
@@ -123,22 +126,35 @@ class AutoAgentService : AccessibilityService() {
             try {
                 takeScreenshot(android.view.Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
                         override fun onSuccess(screenshot: ScreenshotResult) {
-                            try {
-                                val elapsed = System.currentTimeMillis() - System.currentTimeMillis() // simplified for brevity as we don't track start time here easily without scope
-                                val bitmap = Bitmap.wrapHardwareBuffer(
-                                    screenshot.hardwareBuffer, 
-                                    screenshot.colorSpace
-                                )
-                                if (bitmap != null) {
-                                    Log.d("AutoAgent", "✅ Screenshot SUCCESS: ${bitmap.width}x${bitmap.height}")
-                                    cont.resume(bitmap)
-                                } else {
-                                    Log.e("AutoAgent", "❌ wrapHardwareBuffer returned null")
+                            // 开启协程在后台线程处理，避免阻塞主线程（takeScreenshot 在 mainExecutor 回调）
+                            serviceScope.launch(Dispatchers.Default) {
+                                val buffer = screenshot.hardwareBuffer
+                                try {
+                                    val hwBitmap = Bitmap.wrapHardwareBuffer(buffer, screenshot.colorSpace)
+                                    if (hwBitmap != null) {
+                                        // 关键修复：Hardware Bitmap 在模拟器上压缩会变黑，且 copy 是耗时操作
+                                        // 必须在非 UI 线程执行
+                                        val softwareBitmap = hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                        hwBitmap.recycle()
+                                        
+                                        if (softwareBitmap != null) {
+                                            Log.d("AutoAgent", "✅ Screenshot SUCCESS (Software): ${softwareBitmap.width}x${softwareBitmap.height}")
+                                            cont.resume(softwareBitmap)
+                                        } else {
+                                            Log.e("AutoAgent", "❌ Failed to copy to software bitmap")
+                                            cont.resume(null)
+                                        }
+                                    } else {
+                                        Log.e("AutoAgent", "❌ wrapHardwareBuffer returned null")
+                                        cont.resume(null)
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e("AutoAgent", "❌ Failed to process screenshot", e)
                                     cont.resume(null)
+                                } finally {
+                                    // 必须显式关闭 HardwareBuffer，否则会造成严重的 Native 内存泄漏
+                                    try { buffer.close() } catch (e: Exception) { /* IGNORE */ }
                                 }
-                            } catch (e: Exception) {
-                                Log.e("AutoAgent", "❌ Failed to process screenshot", e)
-                                cont.resume(null)
                             }
                         }
 

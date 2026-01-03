@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.jetbrainsKotlinAndroid)
@@ -20,6 +22,38 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        
+        // 只保留真实手机使用的 ARM 架构，移除模拟器用的 x86
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+
+        // 读取 secrets.properties 作为默认配置
+        val secretsFile = rootProject.file("secrets.properties")
+        val secrets = Properties()
+        if (secretsFile.exists()) {
+            secretsFile.inputStream().use { secrets.load(it) }
+        }
+
+        // 安全地获取并转义属性值，防止反斜杠或引号破坏 Java 源码
+        // 同时自动剥离值两端可能存在的多余双引号
+        fun getSecret(key: String, default: String): String {
+            val rawValue = secrets.getProperty(key, default).trim()
+            val value = if (rawValue.startsWith("\"") && rawValue.endsWith("\"") && rawValue.length >= 2) {
+                rawValue.substring(1, rawValue.length - 1)
+            } else {
+                rawValue
+            }
+            return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        }
+
+        buildConfigField("String", "ZHIPU_API_KEY", getSecret("ZHIPU_API_KEY", ""))
+        buildConfigField("String", "ZHIPU_BASE_URL", getSecret("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/"))
+        buildConfigField("String", "ZHIPU_MODEL", getSecret("ZHIPU_MODEL", "glm-4-flash"))
+        
+        buildConfigField("String", "EDGE_API_KEY", getSecret("EDGE_API_KEY", ""))
+        buildConfigField("String", "EDGE_BASE_URL", getSecret("EDGE_BASE_URL", ""))
+        buildConfigField("String", "EDGE_MODEL", getSecret("EDGE_MODEL", ""))
     }
 
     buildTypes {
@@ -37,6 +71,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"

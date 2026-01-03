@@ -166,7 +166,10 @@ class AgentRepository @Inject constructor(
         return """
 今天的日期是: $dateStr
 
-你是一个智能体分析专家，可以根据操作历史和当前状态图执行一系列操作来完成任务。
+你是一个智能体分析专家，能够结合屏幕截图和结构化UI树来精准执行操作。每轮对话你会收到：
+1. 当前屏幕截图（视觉上下文）
+2. UI树（JSON格式，包含所有可交互元素的准确位置和属性）
+
 你必须严格按照要求输出以下格式：
 <think>{think}</think>
 <answer>{action}</answer>
@@ -174,6 +177,12 @@ class AgentRepository @Inject constructor(
 其中：
 - {think} 是对你为什么选择这个操作的简短推理说明。
 - {action} 是本次执行的具体操作指令，必须严格遵循下方定义的指令格式。
+
+**重要：如何获取坐标**
+- UI树中每个元素都有 "b":[left,top,right,bottom] 字段，表示归一化坐标（范围0-999）
+- 点击时使用元素的中心点：center_x = (left+right)/2, center_y = (top+bottom)/2
+**执行优先级：如果UI树中存在目标元素（通过 "t"(text) 或 "d"(description) 匹配），
+优先使用该元素的 "b" 坐标执行操作，ui树中完全找不到目标元素时，请基于截图进行视觉定位**
 
 操作指令及其作用如下：
 - do(action="Launch", app="xxx")  
@@ -341,14 +350,18 @@ class AgentRepository @Inject constructor(
                 }
                 
                 val currentApp = AutoAgentService.instance?.currentPackageName ?: "Unknown"
+                
+                // 获取压缩后的 UI 树 (JSON)
+                val uiTreeJson = AutoAgentService.instance?.dumpOptimizedUiTree() ?: "[]"
+                
                 // 构造带笔记的环境信息
                 val notesContext = if (taskNotes.isNotEmpty()) "\n\n** Task Notes **\n" + taskNotes.joinToString("\n") { "- $it" } else ""
                 
                 // 只有首步发送指令, 后续步骤发送环境信息
                 val textContent = if (stepsCount == 1) {
-                    "$taskGoal\n\n** Current Environment **\nApp: $currentApp$notesContext$extraDeadlockInfo"
+                    "$taskGoal\n\n** Current Environment **\nApp: $currentApp\n\n** Current UI Context **\n```json\n$uiTreeJson\n```$notesContext$extraDeadlockInfo"
                 } else {
-                    "** Screen Info **\nApp: $currentApp$notesContext$extraDeadlockInfo"
+                    "** Screen Info **\nApp: $currentApp\n\n** Current UI Context **\n```json\n$uiTreeJson\n```$notesContext$extraDeadlockInfo"
                 }
                 contentParts.add(ContentPart(type = "text", text = textContent))
 

@@ -1,5 +1,7 @@
 package com.autoglm.autoagent.data
 
+import com.autoglm.autoagent.BuildConfig
+
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -50,17 +52,17 @@ class SettingsRepository @Inject constructor(
         val providerStr = encryptedPrefs.getString("current_provider", ApiProvider.ZHIPU.name) ?: ApiProvider.ZHIPU.name
         val provider = try { ApiProvider.valueOf(providerStr) } catch (e: Exception) { ApiProvider.ZHIPU }
         
-        // 根据 provider 读取对应的配置
+        // 根据 provider 读取对应的配置，确保即使是空字符串也能回退到 BuildConfig 默认值
         val (baseUrl, apiKey, model) = when (provider) {
             ApiProvider.EDGE -> Triple(
-                encryptedPrefs.getString("edge_base_url", "") ?: "",
-                encryptedPrefs.getString("edge_api_key", "") ?: "",
-                encryptedPrefs.getString("edge_model", "") ?: ""
+                encryptedPrefs.getString("edge_base_url", BuildConfig.EDGE_BASE_URL).let { if (it.isNullOrBlank()) BuildConfig.EDGE_BASE_URL else it },
+                encryptedPrefs.getString("edge_api_key", BuildConfig.EDGE_API_KEY).let { if (it.isNullOrBlank()) BuildConfig.EDGE_API_KEY else it },
+                encryptedPrefs.getString("edge_model", BuildConfig.EDGE_MODEL).let { if (it.isNullOrBlank()) BuildConfig.EDGE_MODEL else it }
             )
             ApiProvider.ZHIPU -> Triple(
-                encryptedPrefs.getString("zhipu_base_url", "https://open.bigmodel.cn/api/paas/v4/") ?: "",
-                encryptedPrefs.getString("zhipu_api_key", "") ?: "",
-                encryptedPrefs.getString("zhipu_model", "glm-4-flash") ?: ""
+                encryptedPrefs.getString("zhipu_base_url", BuildConfig.ZHIPU_BASE_URL).let { if (it.isNullOrBlank()) BuildConfig.ZHIPU_BASE_URL else it },
+                encryptedPrefs.getString("zhipu_api_key", BuildConfig.ZHIPU_API_KEY).let { if (it.isNullOrBlank()) BuildConfig.ZHIPU_API_KEY else it },
+                encryptedPrefs.getString("zhipu_model", BuildConfig.ZHIPU_MODEL).let { if (it.isNullOrBlank()) BuildConfig.ZHIPU_MODEL else it }
             )
         }
         
@@ -97,14 +99,14 @@ class SettingsRepository @Inject constructor(
     fun loadProviderConfig(provider: ApiProvider): ApiConfig {
         val (baseUrl, apiKey, model) = when (provider) {
             ApiProvider.EDGE -> Triple(
-                encryptedPrefs.getString("edge_base_url", "") ?: "",
-                encryptedPrefs.getString("edge_api_key", "") ?: "",
-                encryptedPrefs.getString("edge_model", "") ?: ""
+                encryptedPrefs.getString("edge_base_url", BuildConfig.EDGE_BASE_URL).let { if (it.isNullOrBlank()) BuildConfig.EDGE_BASE_URL else it },
+                encryptedPrefs.getString("edge_api_key", BuildConfig.EDGE_API_KEY).let { if (it.isNullOrBlank()) BuildConfig.EDGE_API_KEY else it },
+                encryptedPrefs.getString("edge_model", BuildConfig.EDGE_MODEL).let { if (it.isNullOrBlank()) BuildConfig.EDGE_MODEL else it }
             )
             ApiProvider.ZHIPU -> Triple(
-                encryptedPrefs.getString("zhipu_base_url", "https://open.bigmodel.cn/api/paas/v4/") ?: "",
-                encryptedPrefs.getString("zhipu_api_key", "") ?: "",
-                encryptedPrefs.getString("zhipu_model", "glm-4-flash") ?: ""
+                encryptedPrefs.getString("zhipu_base_url", BuildConfig.ZHIPU_BASE_URL).let { if (it.isNullOrBlank()) BuildConfig.ZHIPU_BASE_URL else it },
+                encryptedPrefs.getString("zhipu_api_key", BuildConfig.ZHIPU_API_KEY).let { if (it.isNullOrBlank()) BuildConfig.ZHIPU_API_KEY else it },
+                encryptedPrefs.getString("zhipu_model", BuildConfig.ZHIPU_MODEL).let { if (it.isNullOrBlank()) BuildConfig.ZHIPU_MODEL else it }
             )
         }
         return ApiConfig(provider, baseUrl, apiKey, model)

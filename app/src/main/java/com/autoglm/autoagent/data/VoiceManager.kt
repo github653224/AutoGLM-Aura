@@ -3,9 +3,13 @@ package com.autoglm.autoagent.data
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.k2fsa.sherpa.onnx.*
@@ -30,6 +34,10 @@ class VoiceManager @Inject constructor(
     private var stream: OfflineStream? = null
     private var audioRecord: AudioRecord? = null
     private var isRecording = false
+    
+    // 音频焦点管理
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private var audioFocusRequest: AudioFocusRequest? = null
     
     private val _voiceState = MutableStateFlow<VoiceState>(VoiceState.Idle)
     val voiceState = _voiceState.asStateFlow()
@@ -66,8 +74,6 @@ class VoiceManager @Inject constructor(
 
     @Synchronized
     fun stopListening() {
-        if (audioRecord == null) return
-        
         isRecording = false
         try {
             if (audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
@@ -84,12 +90,17 @@ class VoiceManager @Inject constructor(
                 Log.e("VoiceManager", "Error releasing AudioRecord", e)
             }
             audioRecord = null
+            
+            // 总是释放音频焦点（即使 audioRecord 为 null）
+            releaseAudioFocus()
+            
             _voiceState.value = VoiceState.Idle
         }
     }
 
     private fun startRecording() {
         stopListening() // Ensure clean state
+        var focusRequested = false
         try {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) 
                 != PackageManager.PERMISSION_GRANTED) {
@@ -121,10 +132,19 @@ class VoiceManager @Inject constructor(
             )
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                audioRecord?.release()
+                audioRecord = null
                 _voiceState.value = VoiceState.Error("Failed to initialize AudioRecord")
                 return
             }
 
+            // 请求音频焦点（尝试暂停其他应用的音频，但失败不影响录音）
+            focusRequested = requestAudioFocus()
+            if (!focusRequested) {
+                Log.w("VoiceManager", "Failed to gain audio focus - other audio may continue playing")
+                // 不中断，继续录音
+            }
+            
             audioRecord?.startRecording()
             isRecording = true
             _voiceState.value = VoiceState.Listening
@@ -135,7 +155,14 @@ class VoiceManager @Inject constructor(
         } catch (e: Exception) {
             Log.e("VoiceManager", "Failed to start recording", e)
             _voiceState.value = VoiceState.Error("Failed to start: ${e.message}")
-            stopListening()
+            // 确保清理资源
+            if (focusRequested) {
+                releaseAudioFocus()
+            }
+            audioRecord?.release()
+            audioRecord = null
+            stream?.release()
+            stream = null
         }
     }
 
@@ -243,8 +270,73 @@ class VoiceManager @Inject constructor(
                 Log.e("VoiceManager", "Error releasing AudioRecord", e)
             }
             audioRecord = null
+            
+            // 释放音频焦点
+            releaseAudioFocus()
+            
             _voiceState.value = VoiceState.Idle
             Log.d("VoiceManager", "Listening Canceled")
+        }
+    }
+    
+    @Synchronized
+    private fun requestAudioFocus(): Boolean {
+        // 防御性编程：先释放旧的焦点请求
+        releaseAudioFocus()
+        
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val audioAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                
+                // 使用普通短暂焦点，不和系统/通话竞争
+                audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                    .setAudioAttributes(audioAttributes)
+                    .setAcceptsDelayedFocusGain(false)
+                    .setWillPauseWhenDucked(false)
+                    .build()
+                
+                val result = audioManager.requestAudioFocus(audioFocusRequest!!)
+                val granted = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                if (!granted) {
+                    // 请求失败，立即清理
+                    audioFocusRequest = null
+                }
+                granted
+            } else {
+                // 使用普通短暂焦点，不和系统/通话竞争
+                @Suppress("DEPRECATION")
+                val result = audioManager.requestAudioFocus(
+                    null,
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                )
+                result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            }
+        } catch (e: Exception) {
+            Log.e("VoiceManager", "Failed to request audio focus", e)
+            audioFocusRequest = null
+            false
+        }
+    }
+    
+    @Synchronized
+    private fun releaseAudioFocus() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let {
+                    audioManager.abandonAudioFocusRequest(it)
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.abandonAudioFocus(null)
+            }
+            audioFocusRequest = null
+            Log.d("VoiceManager", "Audio focus released")
+        } catch (e: Exception) {
+            Log.e("VoiceManager", "Failed to release audio focus", e)
         }
     }
 
@@ -299,6 +391,8 @@ class VoiceManager @Inject constructor(
 
     fun cleanup() {
         stopListening()
+        // 确保音频焦点被释放（防御性编程）
+        releaseAudioFocus()
         recognizer?.release()
         recognizer = null
     }

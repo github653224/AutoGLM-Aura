@@ -2,6 +2,7 @@ package com.autoglm.autoagent.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -338,7 +339,46 @@ fun SettingsScreen(
                 SettingsCard(
                     title = "ℹ️ 关于",
                     content = {
-                        InfoRow("版本", "1.0.0")
+                        var clickCount by remember { mutableStateOf(0) }
+                        var lastClickTime by remember { mutableStateOf(0L) }
+                        
+                        // 版本号行（可点击）
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp)
+                                .clickable {
+                                    val currentTime = System.currentTimeMillis()
+                                    // 如果距离上次点击超过2秒，重置计数
+                                    if (currentTime - lastClickTime > 2000) {
+                                        clickCount = 1
+                                    } else {
+                                        clickCount++
+                                    }
+                                    lastClickTime = currentTime
+                                    
+                                    // 连续点击7次触发
+                                    if (clickCount >= 7) {
+                                        clickCount = 0
+                                        // TODO: 跳转到日志界面（下一步实现）
+                                        android.widget.Toast
+                                            .makeText(context, "日志已开启", android.widget.Toast.LENGTH_SHORT)
+                                            .show()
+                                    }
+                                },
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "版本",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextSecondary
+                            )
+                            Text(
+                                text = "1.0.0",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextPrimary
+                            )
+                        }
                         InfoRow("项目", "AutoDroid")
                         InfoRow("开源", "GitHub")
                     }
