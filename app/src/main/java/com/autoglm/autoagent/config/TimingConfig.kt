@@ -13,23 +13,23 @@ object TimingConfig {
      */
     object Action {
         // Tap action delays
-        const val TAP_DELAY = 1000L
-        const val DOUBLE_TAP_DELAY = 1000L
+        const val TAP_DELAY = 300L
+        const val DOUBLE_TAP_DELAY = 500L
         const val LONG_PRESS_DELAY = 1000L
         
         // Swipe/scroll delays
-        const val SWIPE_DELAY = 1000L
+        const val SWIPE_DELAY = 400L
         
         // Navigation delays
-        const val BACK_DELAY = 1000L
-        const val HOME_DELAY = 1000L
+        const val BACK_DELAY = 600L
+        const val HOME_DELAY = 800L
         const val LAUNCH_DELAY = 1000L
         
         // Wait action
         const val WAIT_DELAY = 1000L
         
         // Text input delays
-        const val TYPE_DELAY = 1000L
+        const val TYPE_DELAY = 300L
     }
     
     /**

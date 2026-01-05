@@ -47,6 +47,11 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- 悬浮窗配对服务 -->
+        <service
+            android:name=".shell.PairingFloatService"
+            android:exported="false" />
+
         <service
             android:name=".service.AgentInputMethodService"
             android:label="AutoAgent Keyboard"
@@ -67,6 +72,15 @@
             android:exported="false"/>
 
         <service android:name=".service.FloatingWindowService" />
+
+        <!-- Shizuku Provider（高级模式支持） -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
     </application>
 

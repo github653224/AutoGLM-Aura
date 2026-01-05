@@ -72,6 +72,7 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        aidl = true  // Enable AIDL for shell service communication
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
@@ -79,8 +80,15 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/LICENSE.md"
+            excludes += "/META-INF/LICENSE-notice.md"
         }
     }
+}
+
+// 确保 server.dex 在 app 构建前生成
+tasks.named("preBuild").configure {
+    dependsOn(":server:buildServerDex")
 }
 
 dependencies {
@@ -92,6 +100,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation("androidx.compose.material:material-icons-extended")
     
     // Hilt
     implementation(libs.hilt.android)
@@ -105,13 +114,17 @@ dependencies {
     // Retrofit & OkHttp
     implementation(libs.retrofit)
     implementation(libs.retrofit.gson)
-    implementation(libs.gson) // Force newer Gson
+    implementation(libs.gson)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
     
     // Sherpa-ONNX (local AAR)
     implementation(files("libs/sherpa-onnx.aar"))
-
+    
+    // Shizuku（高级模式）
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+    
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -1,6 +1,7 @@
 package com.autoglm.autoagent.data.api
 
 import android.util.Log
+import com.autoglm.autoagent.data.ApiConfig
 import com.autoglm.autoagent.data.SettingsRepository
 import com.google.gson.Gson
 import com.google.gson.JsonObject
@@ -28,6 +29,7 @@ data class ChatCompletionResponse(val choices: List<Choice>)
 data class Choice(val message: MessageContent)
 data class MessageContent(val content: String?, val tool_calls: List<ToolCall>?)
 
+
 @Singleton
 class AIClient @Inject constructor(
     private val settingsRepository: SettingsRepository
@@ -40,9 +42,10 @@ class AIClient @Inject constructor(
         .build()
 
     suspend fun sendMessage(
-        messages: List<ChatMessage>
+        messages: List<ChatMessage>,
+        overrideConfig: ApiConfig? = null
     ): MessageContent {
-        val config = settingsRepository.config.first()
+        val config = overrideConfig ?: settingsRepository.config.first()
         val baseUrl = config.baseUrl.trimEnd('/')
         val url = "$baseUrl/chat/completions"
         

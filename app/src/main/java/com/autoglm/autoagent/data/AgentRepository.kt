@@ -45,8 +45,16 @@ class AgentRepository @Inject constructor(
     private val aiClient: AIClient,
     private val appManager: AppManager,
     private val settingsRepository: SettingsRepository,
-    private val voiceManager: VoiceManager
+    private val voiceManager: VoiceManager,
+    private val feedbackManager: com.autoglm.autoagent.utils.FeedbackToastManager,
+    private val decisionAgent: com.autoglm.autoagent.agent.DecisionAgent,
+    private val executionAgent: com.autoglm.autoagent.agent.ExecutionAgent,
+    private val fallbackExecutor: com.autoglm.autoagent.executor.FallbackActionExecutor
 ) {
+    
+    // 双智能体模式标志
+    private var dualAgentMode = false
+    private val executedActions = mutableListOf<String>()
     
     // Scope for launching tasks from voice callback
     private val repositoryScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
@@ -238,7 +246,6 @@ class AgentRepository @Inject constructor(
 17. 如果没有合适的搜索结果，可能是因为搜索页面不对，请返回到搜索页面的上一级尝试重新搜索，如果尝试三次返回上一级搜索后仍然没有符合要求的结果，执行 finish(message="原因")。
 18. 在结束任务前请一定要仔细检查任务是否完整准确的完成，如果出现错选、漏选、多选的情况，请返回之前的步骤进行纠正.
 19. 如果执行Launch启动app后显示的界面不是符合的界面,请使用home操作返回到主屏幕后尝试通过桌面找到app后使用Tap点击操作启动app,如果桌面找不到请结束任务.
-20. 如果最后购买步骤中商品的价格比用户指令中预期的价格超过了很多,说明购买的商品不对,请返回重新寻找商品,不然你的操作会给用户带来额外损失.
 """.trimIndent()
 
     }
@@ -260,13 +267,80 @@ class AgentRepository @Inject constructor(
         }
         addUiMessage("system", "✅ 权限检查通过,开始执行任务...")
         // ===== 检查完成 =====
+        
+        // ===== 初始化执行器 =====
+        fallbackExecutor.initialize(defaultScreenWidth, defaultScreenHeight)
+        fallbackExecutor.onModeChanged = { fromMode, toMode ->
+            val fromName = when (fromMode) {
+                com.autoglm.autoagent.executor.ExecutionMode.SHELL -> "Shell服务"
+                com.autoglm.autoagent.executor.ExecutionMode.ACCESSIBILITY -> "无障碍服务"
+                else -> "未知"
+            }
+            val toName = when (toMode) {
+                com.autoglm.autoagent.executor.ExecutionMode.SHELL -> "Shell服务"
+                com.autoglm.autoagent.executor.ExecutionMode.ACCESSIBILITY -> "无障碍服务"
+                com.autoglm.autoagent.executor.ExecutionMode.UNAVAILABLE -> "不可用"
+            }
+            if (toMode == com.autoglm.autoagent.executor.ExecutionMode.UNAVAILABLE) {
+                feedbackManager.notifyServiceUnavailable()
+            } else {
+                feedbackManager.notifyServiceFallback(fromName, toName)
+            }
+        }
+        
+        // 检查是否有可用执行器
+        if (!fallbackExecutor.isAnyExecutorAvailable()) {
+            _agentState.value = AgentState.Error("Shell服务和无障碍服务均不可用")
+            feedbackManager.notifyServiceUnavailable()
+            addUiMessage("system", "❌ 无可用执行器")
+            delay(TimingConfig.Task.ERROR_DELAY)
+            stopAgent()
+            return
+        }
 
         // 清理历史消息并添加系统提示
         messages.clear()
         messages.add(ChatMessage("system", getSystemPrompt()))
         
         val taskGoal = "Task: $goal"
+        
+        // === 检查双智能体可用性 ===
+        val decisionAvailable = decisionAgent.checkAvailability()
+        val executionAvailable = executionAgent.checkAvailability()
+        
+        dualAgentMode = decisionAvailable && executionAvailable
+        executedActions.clear()
+        
+        if (dualAgentMode) {
+            Log.d("Agent", "✅ 双智能体模式：DecisionAgent(ZHIPU) + ExecutionAgent(EDGE)")
+            feedbackManager.show("🤖 双智能体模式启动", android.widget.Toast.LENGTH_SHORT)
+        } else if (decisionAvailable) {
+            Log.d("Agent", "⚠️ 降级模式：仅 DecisionAgent 可用")
+            feedbackManager.show("⚠️ 单模型模式（决策）", android.widget.Toast.LENGTH_SHORT)
+        } else if (executionAvailable) {
+            Log.d("Agent", "⚠️ 降级模式：仅 ExecutionAgent 可用")
+            feedbackManager.show("⚠️ 单模型模式（执行）", android.widget.Toast.LENGTH_SHORT)
+        } else {
+            Log.e("Agent", "❌ 双智能体均不可用，无法执行任务")
+            feedbackManager.show("❌ 无可用模型", android.widget.Toast.LENGTH_LONG)
+            stopAgent()
+            return
+        }
+        
+        // === 任务规划（如果 DecisionAgent 可用）===
+        var taskPlan: com.autoglm.autoagent.agent.TaskPlan? = null
+        if (decisionAvailable) {
+            try {
+                taskPlan = decisionAgent.analyzeTask(goal)
+                Log.d("Agent", "📋 任务计划：${taskPlan.summary}")
+                feedbackManager.show("📋 ${taskPlan.summary}", android.widget.Toast.LENGTH_SHORT)
+            } catch (e: Exception) {
+                Log.e("Agent", "任务规划失败，继续执行", e)
+            }
+        }
+        
         addUiMessage("user", taskGoal)
+        feedbackManager.show("🚀 任务开始: $goal")
         
         try {
             context.startService(Intent(context, FloatingWindowService::class.java))
@@ -284,120 +358,107 @@ class AgentRepository @Inject constructor(
                 
                 addUiMessage("system", "Step $stepsCount thinking...")
 
-                // 1. Capture Screenshot
-                var screenshotBase64: String? = null
-                var currentScreenWidth = defaultScreenWidth  // Default fallback
-                var currentScreenHeight = defaultScreenHeight
-                var extraDeadlockInfo = ""
-                
-                if (isDeadlockState) {
-                    val uiTree = AutoAgentService.instance?.dumpOptimizedUiTree() ?: "{ \"ui\": [] }"
-                    val isUiTreeEmpty = uiTree.contains("\"ui\": []")
-                    
-                    if (isUiTreeEmpty) {
-                        Log.d("Agent", "Deadlock + Empty UI Tree. Fallback to screenshot.")
-                        val screenshot = ScreenCaptureService.instance?.captureSnapshot()
-                        if (screenshot != null) {
-                            screenshotBase64 = screenshot.base64
-                            currentScreenWidth = screenshot.width
-                            currentScreenHeight = screenshot.height
-                        }
-                        extraDeadlockInfo = "\n\n** WARNING: No UI Structure detected. Falling back to visual screenshot for recovery. **"
-                    } else {
-                        Log.d("Agent", "Deadlock + Valid UI Tree. Skipping screenshot.")
-                        extraDeadlockInfo = "\n\n** LOGIC RECOVERY: Screenshot suppressed. Refer to UI Tree provided in the previous message's error context. **"
-                    }
-                } else {
-                    Log.d("Agent", "Attempting to capture screenshot...")
-                    
-                    // API 30+ 直接使用 AccessibilityService 截图
-                    val accessibilityService = AutoAgentService.instance
-                    if (accessibilityService != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                        val bitmap = accessibilityService.takeScreenshotAsync()
-                        if (bitmap != null) {
-                            // 转换为 base64
-                            val stream = java.io.ByteArrayOutputStream()
-                            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
-                            val byteArray = stream.toByteArray()
-                            screenshotBase64 = android.util.Base64.encodeToString(byteArray, android.util.Base64.NO_WRAP)
-                            currentScreenWidth = bitmap.width
-                            currentScreenHeight = bitmap.height
-                            bitmap.recycle()
-                            Log.d("Agent", "✅ Screenshot captured: ${currentScreenWidth}x${currentScreenHeight}")
-                        } else {
-                            Log.w("Agent", "⚠️ AccessibilityService screenshot returned NULL!")
-                        }
-                    } else {
-                        // 回退到 ScreenCaptureService (API < 30 或 AccessibilityService 未启动)
-                        val screenshot = ScreenCaptureService.instance?.captureSnapshot()
-                        if (screenshot != null) {
-                            screenshotBase64 = screenshot.base64
-                            currentScreenWidth = screenshot.width
-                            currentScreenHeight = screenshot.height
-                            Log.d("Agent", "✅ Screenshot captured via ScreenCaptureService: ${currentScreenWidth}x${currentScreenHeight}")
-                        } else {
-                            Log.w("Agent", "⚠️ All screenshot methods failed! Using fallback: ${currentScreenWidth}x${currentScreenHeight}")
-                            Log.w("Agent", "AccessibilityService.instance = $accessibilityService")
-                            Log.w("Agent", "ScreenCaptureService.instance = ${ScreenCaptureService.instance}")
-                        }
-                    }
-                }
-                
-                // 2. Build User Message
-                val contentParts = mutableListOf<ContentPart>()
-                if (screenshotBase64 != null) {
-                    contentParts.add(ContentPart(type = "image_url", image_url = ImageUrl("data:image/png;base64,$screenshotBase64")))
-                }
+                // 1. 获取当前状态
+                feedbackManager.cancelForScreenshot()
+                kotlinx.coroutines.delay(150)
                 
                 val currentApp = AutoAgentService.instance?.currentPackageName ?: "Unknown"
+                val uiTreeJson = AutoAgentService.instance?.dumpOptimizedUiTree() ?: "{\"ui\": []}"
                 
-                // 获取压缩后的 UI 树 (JSON)
-                val uiTreeJson = AutoAgentService.instance?.dumpOptimizedUiTree() ?: "[]"
+                // 截图（异常时或降级时使用）
+                var screenshotBase64: String? = null
+                var currentScreenWidth = defaultScreenWidth
+                var currentScreenHeight = defaultScreenHeight
                 
-                // 构造带笔记的环境信息
-                val notesContext = if (taskNotes.isNotEmpty()) "\n\n** Task Notes **\n" + taskNotes.joinToString("\n") { "- $it" } else ""
-                
-                // 只有首步发送指令, 后续步骤发送环境信息
-                val textContent = if (stepsCount == 1) {
-                    "$taskGoal\n\n** Current Environment **\nApp: $currentApp\n\n** Current UI Context **\n```json\n$uiTreeJson\n```$notesContext$extraDeadlockInfo"
-                } else {
-                    "** Screen Info **\nApp: $currentApp\n\n** Current UI Context **\n```json\n$uiTreeJson\n```$notesContext$extraDeadlockInfo"
+                val needsScreenshot = isDeadlockState || !dualAgentMode
+                if (needsScreenshot) {
+                    val screenshot = captureScreenshot()
+                    screenshotBase64 = screenshot?.base64
+                    currentScreenWidth = screenshot?.width ?: defaultScreenWidth
+                    currentScreenHeight = screenshot?.height ?: defaultScreenHeight
                 }
-                contentParts.add(ContentPart(type = "text", text = textContent))
-
-                // 添加新的 user 消息(带图片)
-                messages.add(ChatMessage("user", contentParts))
-
-                // 3. Inference
-                val responseMsg = aiClient.sendMessage(messages) 
-                val rawContent = responseMsg.content ?: ""
-                Log.d("Agent", "Raw Response: $rawContent")
                 
-                // 4. Parse Response
-                val (think, actionStr) = parseResponse(rawContent)
+                // 2. 决策 (根据模式)
+                var actionStr: String
                 
-                if (think.isNotEmpty()) {
-                    addUiMessage("assistant", "Think: $think")
+                try {
+                    if (dualAgentMode) {
+                        // === 双智能体协作模式 ===
+                        // 2.1 DecisionAgent 决策
+                        val decision = decisionAgent.makeDecision(uiTreeJson, currentApp, screenshotBase64)
+                        Log.d("Agent", "🧠 决策：${decision.action} -> ${decision.target}")
+                        
+                        if (decision.finished) {
+                            Log.i("Agent", "✅ DecisionAgent 判定任务完成")
+                            addUiMessage("system", "任务已完成！")
+                            delay(TimingConfig.Task.FINISH_DELAY)
+                            stopAgent()
+                            return
+                        }
+                        
+                        // 2.2 ExecutionAgent 解析为操作
+                        actionStr = executionAgent.resolveAction(decision, uiTreeJson)
+                        executedActions.add("${decision.action}: ${decision.target}")
+                        
+                    } else if (decisionAgent.checkAvailability()) {
+                        // === 降级模式：仅 DecisionAgent ===
+                        val decision = decisionAgent.makeDecision(uiTreeJson, currentApp, screenshotBase64)
+                        Log.d("Agent", "⚠️ 单模型（决策）：${decision.action}")
+                        
+                        if (decision.finished) {
+                            stopAgent()
+                            return
+                        }
+                        
+                        // 直接转换为 action (无 ExecutionAgent 辅助)
+                        actionStr = convertDecisionToAction(decision)
+                        executedActions.add(actionStr)
+                        
+                    } else if (executionAgent.checkAvailability()) {
+                        // === 降级模式：仅 ExecutionAgent ===
+                        actionStr = executionAgent.executeIndependently(goal, uiTreeJson, currentApp)
+                        Log.d("Agent", "⚠️ 单模型（执行）：$actionStr")
+                        executedActions.add(actionStr)
+                        
+                    } else {
+                        Log.e("Agent", "❌ 双智能体均不可用")
+                        stopAgent()
+                        return
+                    }
+                    
+                } catch (e: Exception) {
+                    Log.e("Agent", "决策失败，尝试降级", e)
+                    
+                    // 异常降级策略
+                    if (dualAgentMode && executionAgent.checkAvailability()) {
+                        Log.w("Agent", "降级到 ExecutionAgent 独立模式")
+                        dualAgentMode = false
+                        actionStr = executionAgent.executeIndependently(goal, uiTreeJson, currentApp)
+                    } else {
+                        throw e
+                    }
                 }
-                addUiMessage("assistant", "Action: $actionStr")
                 
-                messages.add(ChatMessage("assistant", rawContent))
-                
-                // ✅ **重要**: 推理后立即移除上一条user消息中的图片(节省Token)
-                // 匹配 Python: self._context[-1] = remove_images_from_message(self._context[-1])
-                removeImageFromLastUserMessage()
-
-                // 5. Execute Action
+                // 3. 执行操作
                 if (actionStr.contains("finish(")) {
-                    Log.i("Agent", "Step $stepsCount: Received Finish command.")
+                    Log.i("Agent", "✅ 收到完成指令")
                     addUiMessage("system", "任务已完成！")
+                    feedbackManager.notifyTaskCompleted("任务已完成")
                     delay(TimingConfig.Task.FINISH_DELAY)
                     stopAgent()
                     return
                 }
                 
-                Log.i("Agent", "Step $stepsCount: Executing Action -> $actionStr")
+                Log.i("Agent", "Step $stepsCount: 执行 -> $actionStr")
                 val result = executeActionString(actionStr, currentScreenWidth, currentScreenHeight)
+                
+                // 显示操作反馈
+                if (!actionStr.contains("finish", ignoreCase = true)) {
+                   val actionName = parseActionName(actionStr)
+                   val target = parseActionTarget(actionStr)
+                   feedbackManager.showAction(actionName, target)
+                }
+
                 Log.i("Agent", "Step $stepsCount: Execution Result -> $result")
                 addUiMessage("system", "Result: $result")
                 
@@ -792,25 +853,66 @@ class AgentRepository @Inject constructor(
         android.util.Log.d("Agent", "Task stopped, floating window remains active")
     }
     
-    private fun checkDuplicate(type: String, x: Int, y: Int): Boolean {
-        if (type == lastActionType && 
-            kotlin.math.abs(x - lastTapX) < 20 && 
-            kotlin.math.abs(y - lastTapY) < 20) {
-            sameTapCount++
-        } else {
-            sameTapCount = 1
-            lastActionType = type
-            lastTapX = x
-            lastTapY = y
+    // 内部类：异常/死循环检测器
+    private inner class AnomalyDetector {
+        private val MAX_SAME_ACTION = 3
+        private val MAX_FAILURES = 3
+        
+        private var lastActionType = ""
+        private var lastActionParams = ""  // 复合参数: "x,y" 或 "text"
+        private var sameActionCount = 0
+        private var consecutiveFailures = 0
+        
+        fun checkDuplicate(type: String, params: String): Boolean {
+            if (type == lastActionType && params == lastActionParams) {
+                sameActionCount++
+            } else {
+                sameActionCount = 1
+                lastActionType = type
+                lastActionParams = params
+            }
+            return sameActionCount >= MAX_SAME_ACTION
         }
-        return sameTapCount > 2
+        
+        fun recordSuccess() {
+            consecutiveFailures = 0
+        }
+        
+        fun recordFailure() {
+            consecutiveFailures++
+        }
+        
+        fun hasTooManyFailures(): Boolean {
+            return consecutiveFailures >= MAX_FAILURES
+        }
+        
+        fun reset() {
+            lastActionType = ""
+            lastActionParams = ""
+            sameActionCount = 0
+            consecutiveFailures = 0
+        }
+        
+        fun getErrorContext(): String {
+            return when {
+                sameActionCount >= MAX_SAME_ACTION -> "连续 $sameActionCount 次执行相同操作 ($lastActionType: $lastActionParams) 无效"
+                consecutiveFailures >= MAX_FAILURES -> "连续 $consecutiveFailures 次操作失败"
+                else -> "未知异常"
+            }
+        }
+    }
+    
+    private val anomalyDetector = AnomalyDetector()
+
+    // 兼容原有调用接口（重定向到 anomalyDetector）
+    private fun checkDuplicate(type: String, x: Int, y: Int): Boolean {
+        // 坐标允许 20px 误差 (由于转为字符串比较，这里简化为直接比较，后续可以优化包含误差的逻辑)
+        // 为保持简单，暂不处理 20px 误差，直接转换
+        return anomalyDetector.checkDuplicate(type, "$x,$y")
     }
 
     private fun resetDuplicateTracker() {
-        lastActionType = ""
-        lastTapX = 0
-        lastTapY = 0
-        sameTapCount = 0
+        anomalyDetector.reset()
     }
 
     fun addMessage(role: String, content: String) {
@@ -847,4 +949,61 @@ class AgentRepository @Inject constructor(
             }
         }
     }
+
+    private fun parseActionName(actionStr: String): String {
+        val m = Pattern.compile("action\\s*=\\s*[\"'](.*?)[\"']", Pattern.CASE_INSENSITIVE).matcher(actionStr)
+        return if (m.find()) m.group(1) else "action"
+    }
+
+    private fun parseActionTarget(actionStr: String): String {
+        // 简单提取 text 或 element 参数作为 target 用于显示
+        val mText = Pattern.compile("text\\s*=\\s*[\"'](.*?)[\"']").matcher(actionStr)
+        if (mText.find()) return mText.group(1)
+        
+        val mRef = Pattern.compile("element\\s*=\\s*\\[(.*?)\\]").matcher(actionStr)
+        if (mRef.find()) return "[${mRef.group(1)}]"
+        
+        val mStart = Pattern.compile("start\\s*=\\s*\\[(.*?)\\]").matcher(actionStr)
+        if (mStart.find()) return "[${mStart.group(1)}]..."
+        
+        return ""
+    }
+
+
+    // 辅助方法：截图
+    private suspend fun captureScreenshot(): ScreenshotData? {
+        val accessibilityService = AutoAgentService.instance
+        return if (accessibilityService != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            val bitmap = accessibilityService.takeScreenshotAsync()
+            if (bitmap != null) {
+                val stream = java.io.ByteArrayOutputStream()
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+                val byteArray = stream.toByteArray()
+                val base64 = android.util.Base64.encodeToString(byteArray, android.util.Base64.NO_WRAP)
+                val result = ScreenshotData(base64, bitmap.width, bitmap.height)
+                bitmap.recycle()
+                result
+            } else null
+        } else {
+            ScreenCaptureService.instance?.captureSnapshot()
+        }
+    }
+
+    // 辅助方法：将 Decision 转换为 Action 字符串（降级时使用）
+    private fun convertDecisionToAction(decision: com.autoglm.autoagent.agent.Decision): String {
+        return when (decision.action.lowercase()) {
+            "tap", "click" -> "do(action=\"Tap\", element=${decision.target})"
+            "type", "input" -> "do(action=\"Type\", text=\"${decision.target}\")"
+            "back" -> "do(action=\"Back\")"
+            "home" -> "do(action=\"Home\")"
+            "finish" -> "finish(message=\"完成\")"
+            else -> "do(action=\"Tap\", element=[500,500])"
+        }
+    }
 }
+
+data class ScreenshotData(
+    val base64: String,
+    val width: Int,
+    val height: Int
+)

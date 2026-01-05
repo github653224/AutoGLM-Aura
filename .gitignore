@@ -23,7 +23,7 @@ app/src/main/assets/sherpa-*
 gradle/
 gradlew
 gradlew.bat
-
+.git
 # Keystore
 *.jks
 *.keystore

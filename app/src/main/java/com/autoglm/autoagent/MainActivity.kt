@@ -47,13 +47,20 @@ fun AutoGLMApp() {
         composable("home") {
             HomeScreen(
                 viewModel = hiltViewModel(),
-                onOpenSettings = { navController.navigate("settings") }
+                onOpenSettings = { navController.navigate("settings") },
+                onOpenAdvancedMode = { navController.navigate("advanced_mode") }
             )
         }
         composable("settings") {
             SettingsScreen(
                 viewModel = hiltViewModel(),
                 onBack = { navController.popBackStack() }
+            )
+        }
+        composable("advanced_mode") {
+            com.autoglm.autoagent.ui.ShellServiceActivationScreen(
+                viewModel = hiltViewModel(),
+                onNavigateBack = { navController.popBackStack() }
             )
         }
     }

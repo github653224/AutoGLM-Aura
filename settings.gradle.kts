@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "AutoGLM-Native"
 include(":app")
+include(":server")  // Shell service module

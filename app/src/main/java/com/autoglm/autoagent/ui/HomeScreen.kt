@@ -225,7 +225,8 @@ class HomeViewModel @Inject constructor(
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenAdvancedMode: () -> Unit = {}  // New parameter
 ) {
     val agentStatus by viewModel.agentStatus.collectAsState()
     val lastUserCommand by viewModel.lastUserCommand.collectAsState()
@@ -281,20 +282,38 @@ fun HomeScreen(
                     )
                 }
                 
-                // Settings Icon (Glass)
-                IconButton(
-                    onClick = onOpenSettings,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(GlassLight.copy(alpha=0.1f))
-                        .size(40.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Setting",
-                        tint = TextSecondary,
-                        modifier = Modifier.size(20.dp)
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Advanced Mode Icon
+                    IconButton(
+                        onClick = onOpenAdvancedMode,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(PrimaryPurple.copy(alpha=0.15f))
+                            .size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Rocket,
+                            contentDescription = "高级模式",
+                            tint = PrimaryPurple,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    
+                    // Settings Icon (Glass)
+                    IconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(GlassLight.copy(alpha=0.1f))
+                            .size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Setting",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
 
