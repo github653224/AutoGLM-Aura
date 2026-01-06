@@ -36,6 +36,8 @@ class DualModelAgent @Inject constructor(
     private val orchestrator: Orchestrator,
     private val worker: VisionWorker,
     private val contextManager: ContextManager,
+    private val taskNotificationManager: com.autoglm.autoagent.utils.TaskNotificationManager,
+    private val shizukuManager: com.autoglm.autoagent.shizuku.ShizukuManager,
     private val agentRepositoryProvider: dagger.Lazy<AgentRepository>
 ) {
     private val agentRepository get() = agentRepositoryProvider.get()
@@ -68,6 +70,12 @@ class DualModelAgent @Inject constructor(
     
     private val _planCountdown = MutableStateFlow(0)
     val planCountdown: StateFlow<Int> = _planCountdown.asStateFlow()
+    
+    // ASK_USER 状态
+    private val _pendingQuestion = MutableStateFlow<String?>(null)
+    val pendingQuestion: StateFlow<String?> = _pendingQuestion.asStateFlow()
+    
+    private val _userAnswer = MutableStateFlow<String?>(null)
     
     // 异步任务
     private val reviewScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -109,7 +117,7 @@ class DualModelAgent @Inject constructor(
                 }
                 is PlanResult.Plan -> {
                     val plan = planResult.plan
-                    log("📋 [规划] ${plan.selectedApp} - 共 ${plan.steps.size} 步")
+                    log("📋 [规划] 共 ${plan.steps.size} 步")
                     
                     // 显示规划到 UI，等待确认
                     _pendingPlan.value = plan
@@ -152,11 +160,11 @@ class DualModelAgent @Inject constructor(
      * @return true=确认执行, false=取消
      */
     private suspend fun waitForConfirmation(): Boolean {
-        _planCountdown.value = 3
+        _planCountdown.value = 8
         
         return suspendCancellableCoroutine { continuation ->
             confirmationJob = reviewScope.launch {
-                for (i in 3 downTo 1) {
+                for (i in 8 downTo 1) {
                     _planCountdown.value = i
                     delay(1000)
                     
@@ -204,6 +212,13 @@ class DualModelAgent @Inject constructor(
         reviewJob?.cancel()
         confirmationJob?.cancel()
     }
+    
+    /**
+     * 用户回答 ASK_USER 问题
+     */
+    fun answerQuestion(answer: String) {
+        _userAnswer.value = answer
+    }
 
     // ==================== 执行循环 ====================
 
@@ -221,6 +236,33 @@ class DualModelAgent @Inject constructor(
                     return TaskResult.Cancelled
                 }
                 
+                // 检查是否是 ASK_USER（reason 包含问题内容）
+                if (reason != null && reason.contains("?") || reason?.contains("？") == true) {
+                    // ASK_USER: 弹出问题等待用户回答
+                    _pendingQuestion.value = reason
+                    _statusMessage.value = "❓ 等待用户回复..."
+                    log("❓ 需要用户澄清: $reason")
+                    
+                    val answer = waitForUserAnswer()
+                    if (answer.isBlank()) {
+                        // 用户未回复或任务被取消
+                        shouldInterrupt.set(false)
+                        interruptReason.set(null)
+                        continue
+                    }
+                    
+                    // 用户回复后重新规划
+                    log("📝 用户回复: $answer")
+                    val context = buildContext()
+                    val newPlan = orchestrator.replanWithUserAnswer(answer, context)
+                    contextManager.setPlan(newPlan)
+                    log("📋 重新规划: ${newPlan.steps.size} 步")
+                    
+                    shouldInterrupt.set(false)
+                    interruptReason.set(null)
+                    continue
+                }
+                
                 // 大模型要求中断，等待新指令
                 _statusMessage.value = "🧠 等待大模型指令..."
                 val newDecision = waitForReplanDecision()
@@ -230,6 +272,17 @@ class DualModelAgent @Inject constructor(
                 }
                 if (newDecision.type == DecisionType.ERROR) {
                     return TaskResult.Error(newDecision.message)
+                }
+                
+                // 处理 REPLAN：将新步骤注入到上下文
+                if (newDecision.type == DecisionType.REPLAN && !newDecision.newSteps.isNullOrEmpty()) {
+                    val currentPlan = contextManager.getPlan()
+                    val updatedPlan = TaskPlan.fromStringList(
+                        goal = currentPlan?.goal ?: goal,
+                        stepStrings = newDecision.newSteps
+                    )
+                    contextManager.setPlan(updatedPlan)
+                    log("📋 [重规划] 新计划 ${newDecision.newSteps.size} 步: ${newDecision.newSteps.firstOrNull() ?: ""}")
                 }
                 
                 // 重置中断，继续执行
@@ -242,6 +295,23 @@ class DualModelAgent @Inject constructor(
             stepsSinceLastReview++
             _currentStep.value = totalSteps
             _statusMessage.value = "[$totalSteps] ⚡ 执行中..."
+
+            // 截图前确保 Shell 服务依然存活 (如果处于后台模式)
+            if (agentRepository.isBackgroundMode) {
+                var retryCount = 0
+                while (!shizukuManager.ensureConnected() && retryCount < 3) {
+                    retryCount++
+                    Log.w(TAG, "Shell disconnected in DualMode background, retry $retryCount/3")
+                    taskNotificationManager.updateStatus("正在重连 Shell 服务 ($retryCount/3)...")
+                    delay(2000)
+                }
+                
+                if (!shizukuManager.isServiceConnected.value) {
+                    taskNotificationManager.showErrorNotification("任务暂停", "Shell 连通性损坏，请检查授权。")
+                    log("❌ Shell 服务断开且重连失败")
+                    return TaskResult.Error("Shell disconnection")
+                }
+            }
 
             // 小模型执行一步（单步模式）
             val report = worker.executeSingleStep(goal)
@@ -346,7 +416,9 @@ class DualModelAgent @Inject constructor(
                 // 处理审查结果
                 when (decision.type) {
                     DecisionType.NEXT_STEP -> {
-                        // 正常，不干预
+                        // 当前步骤完成，推进到下一步
+                        contextManager.getPlan()?.markCurrentCompleted()
+                        log("✅ 步骤完成，推进到: ${decision.nextStep ?: "下一步"}")
                     }
                     DecisionType.REPLAN, DecisionType.ERROR, DecisionType.FINISH, DecisionType.ASK_USER -> {
                         // 需要中断小模型
@@ -415,19 +487,64 @@ class DualModelAgent @Inject constructor(
     }
 
     private suspend fun waitForUserResume() {
-        // TODO: 实现暂停等待用户的逻辑
-        // 可以通过 StateFlow 或 Channel 实现
-        delay(5000) // 临时实现：等待5秒
+        // 复用 AgentRepository 的等待恢复逻辑
+        agentRepository.waitForResume()
+    }
+    
+    /**
+     * 等待用户回答 ASK_USER 问题
+     */
+    private suspend fun waitForUserAnswer(): String {
+        _userAnswer.value = null
+        return suspendCancellableCoroutine { continuation ->
+            reviewScope.launch {
+                while (_userAnswer.value == null && _isRunning.value) {
+                    delay(200)
+                }
+                val answer = _userAnswer.value ?: ""
+                _pendingQuestion.value = null
+                if (continuation.isActive) {
+                    continuation.resume(answer) {}
+                }
+            }
+        }
     }
 
     private suspend fun captureCurrentScreenshot(): Bitmap? {
-        val accessibilityService = AutoAgentService.instance
-        return if (accessibilityService != null && 
-            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-            accessibilityService.takeScreenshotAsync()
-        } else {
-            null
+        val displayId = if (agentRepository.isBackgroundMode) agentRepository.virtualDisplayId else 0
+        
+        // 1. 如果是后台模式，优先使用 Shell 截图
+        if (displayId > 0) {
+            try {
+                val data = shizukuManager.getService()?.captureScreen(displayId)
+                if (data != null && data.isNotEmpty()) {
+                    val bitmap = android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size)
+                    if (bitmap != null) return bitmap
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Shell screenshot failed on Display $displayId", e)
+            }
         }
+
+        // 2. 兜底使用无障碍截图
+        val accessibilityService = AutoAgentService.instance
+        if (accessibilityService != null && 
+            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            val bitmap = accessibilityService.takeScreenshotAsync()
+            if (bitmap != null) return bitmap
+        }
+        
+        // 3. 极速模式 Shell 兜底 (主屏)
+        if (displayId == 0) {
+            try {
+                val data = shizukuManager.getService()?.captureScreen(0)
+                if (data != null && data.isNotEmpty()) {
+                    return android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size)
+                }
+            } catch (e: Exception) {}
+        }
+        
+        return null
     }
 
     // ==================== 辅助方法 ====================
