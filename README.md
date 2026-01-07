@@ -30,9 +30,9 @@ AutoGLM-Aura is a native Android implementation of the [Open-AutoGLM](https://gi
 - 🧠 **Dual Execution Modes**:
     - **Turbo Mode**: Single model fast execution for simple tasks.
     - **Deep Mode**: Orchestrator + Worker dual-model collaboration for complex tasks.
-- 🔒 **Secure Storage** - API configurations are encrypted.
-- 🌐 **Custom API** - Supports self-hosted or third-party AI services.
-- ✨ **Direct Injection** - Implements text input via native Accessibility Service injection, no keyboard switching required.
+- 🔒 **Secure Storage** - API keys and configurations are encrypted using Android's EncryptedSharedPreferences.
+- 🌐 **Flexible API** - Compatible with any OpenAI-format API, including self-hosted models (e.g., Ollama, vLLM) and third-party services (e.g., Zhipu, DeepSeek).
+- ✨ **Native Text Injection** - Injects text directly via Accessibility Service without requiring ADB Keyboard or IME switching.
 
 ### 🧠 Turbo vs Deep Mode
 
