@@ -1,6 +1,6 @@
 # 第三方组件许可
 
-AutoDroid 使用了以下第三方开源组件:
+AutoGLM-Aura 使用了以下第三方开源组件:
 
 ## Sherpa-ONNX
 

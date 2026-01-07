@@ -18,14 +18,14 @@ import rikka.shizuku.ShizukuBinderWrapper
 import java.lang.reflect.Method
 
 /**
- * AutoDroid User Service
- * Implementation of IAutoDroidShell running in a privileged process via Shizuku.
+ * AutoGLM-Aura User Service
+ * Implementation of IAutoGLMAuraShell running in a privileged process via Shizuku.
  */
 @Keep
-class AutoDroidUserService(private val context: Context) : IAutoDroidShell.Stub() {
+class AutoGLMAuraUserService(private val context: Context) : IAutoGLMAuraShell.Stub() {
     
     companion object {
-        private const val TAG = "AutoDroidUserService"
+        private const val TAG = "AutoGLMAuraUserService"
     }
     
     // Cached reflection
@@ -37,7 +37,7 @@ class AutoDroidUserService(private val context: Context) : IAutoDroidShell.Stub(
     private val imageReaders = mutableMapOf<Int, android.media.ImageReader>()
     
     init {
-        Log.d(TAG, "🚀 AutoDroidUserService initialized with App Context")
+        Log.d(TAG, "🚀 AutoGLMAuraUserService initialized with App Context")
         initInputManager()
     }
 
@@ -199,9 +199,10 @@ class AutoDroidUserService(private val context: Context) : IAutoDroidShell.Stub(
             
             // -S: Force stop (Cold Start)
             // -W: Wait for launch
-            // --windowingMode 1: Fullscreen
-            val cmd = "am start -n $componentName --display $displayId -S -W --windowingMode 1"
-            Log.i(TAG, "Shizuku Launch: $cmd")
+            // --display: Target display
+            // -f 0x10008000: FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TASK
+            val cmd = "am start -n $componentName --display $displayId -S -W -f 0x10008000 --windowingMode 1"
+            Log.i(TAG, "Shizuku Force Launch: $cmd")
             
             val process = runShizukuCommand(cmd)
             return process?.waitFor() == 0

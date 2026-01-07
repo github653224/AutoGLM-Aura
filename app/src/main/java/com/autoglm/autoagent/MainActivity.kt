@@ -26,7 +26,7 @@ class MainActivity : ComponentActivity() {
         
         // setContent...
         setContent {
-            com.autoglm.autoagent.ui.theme.AutoDroidTheme {
+            com.autoglm.autoagent.ui.theme.AutoGLMAuraTheme {
                 AutoGLMApp()
             }
         }

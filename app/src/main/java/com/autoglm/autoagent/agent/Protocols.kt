@@ -50,6 +50,7 @@ data class TaskStep(
  */
 data class TaskPlan(
     val goal: String,
+    val selectedApp: String = "", // 选择的 App
     val steps: MutableList<TaskStep>,
     val notes: MutableList<String> = mutableListOf(),
     var currentStepIndex: Int = 0  // 当前执行到第几步
@@ -102,11 +103,11 @@ data class TaskPlan(
         /**
          * 从字符串列表创建 TaskPlan（兼容旧格式）
          */
-        fun fromStringList(goal: String, stepStrings: List<String>): TaskPlan {
+        fun fromStringList(goal: String, stepStrings: List<String>, selectedApp: String = ""): TaskPlan {
             val steps = stepStrings.mapIndexed { i, desc ->
                 TaskStep(desc, if (i == 0) StepStatus.IN_PROGRESS else StepStatus.PENDING)
             }.toMutableList()
-            return TaskPlan(goal = goal, steps = steps)
+            return TaskPlan(goal = goal, steps = steps, selectedApp = selectedApp)
         }
     }
 }

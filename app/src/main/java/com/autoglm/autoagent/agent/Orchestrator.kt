@@ -79,6 +79,7 @@ class Orchestrator @Inject constructor(
             
             parsePlanResult(content, goal)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.e(TAG, "任务规划失败", e)
             // 降级：直接作为单步任务执行
             PlanResult.Plan(TaskPlan.fromStringList(goal, listOf(goal)))
@@ -143,6 +144,7 @@ class Orchestrator @Inject constructor(
             
             parseTaskPlan(responseText, context.goal)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.e(TAG, "重新规划失败", e)
             // 降级：使用用户回复作为新步骤
             TaskPlan.fromStringList(context.goal, listOf(answer))
@@ -181,6 +183,7 @@ class Orchestrator @Inject constructor(
 
             parseDecision(content, context)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.e(TAG, "审查失败", e)
             OrchestratorDecision(DecisionType.ERROR, message = "审查失败: ${e.message}")
         }
@@ -256,6 +259,7 @@ class Orchestrator @Inject constructor(
             conversationHistory.add(ChatMessage("assistant", content))
             parseDecision(content, context)
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.e(TAG, "决策请求失败", e)
             OrchestratorDecision(DecisionType.ERROR, message = "决策失败: ${e.message}")
         }
@@ -303,8 +307,7 @@ class Orchestrator @Inject constructor(
 9. 确认支付前暂停等待用户
 10. 登录/验证时请求用户介入
 12. 面对模糊数量词（如‘点几个外卖’、‘点一点赞’），必须根据任务风险等级进行分层处理：
-高风险/交易类（买东西、转账、发消息等任务）： 禁止自动填充数字。必须触发‘澄清机制’（ASK_USER），要求用户确认具体数量，或默认设置为最小单位（1）并停留在确认页面等待用户点击。
-反例： ‘帮忙订购几个外卖’ -> 不应直接生成订单，而应回复‘已为您打开外卖页面，请确认需要订购的具体份数’或默认选1份但在支付前强阻断。
+高风险/交易类（买东西、转账、发消息等任务）： 如果用户说的不清楚如'点几个外卖'，请向用户确认需要订购的具体份数’或默认选1份。
 低风险/操作类（点赞、刷新、下滑等任务）： 设定一个符合人类行为习惯的小随机范围（如 3-8 次）的固定数字，以方便后续智能体执行。
 
 【决策类型】
@@ -439,28 +442,18 @@ class Orchestrator @Inject constructor(
 
             // 【当前界面截图】
             append("【当前界面截图】\n")
-            append("（已提供当前屏幕截图）\n")
-            append("当前App: ${context.currentApp}\n\n")
-
-            // 【执行历史】
-            append("【执行历史】\n")
-            if (context.textHistory.isNotEmpty()) {
-                context.textHistory.takeLast(8).forEach { append("$it\n") }
-            } else {
-                append("(暂无历史)\n")
+            append("【当前App】${context.currentApp}\n")
+            
+            if (context.currentScreenshot != null) {
+                append("（已提供当前屏幕截图，请根据视觉内容分析）\n")
             }
-            append("\n")
-
-            // 【记录关键数据】
-            append("【记录关键数据】\n")
-            if (notes.isNotEmpty()) {
-                notes.forEach { append("- $it\n") }
-            } else {
-                append("(暂无笔记)\n")
+            
+            // 核心优化：动态告知 UI 树状态
+            if (context.plan?.selectedApp?.isNotBlank() == true) {
+                append("【运行模式】后台隔离模式 (XML UI Tree 不可用)\n")
             }
-            append("\n")
 
-            append("请根据以上信息审查并决定下一步。")
+            append("\n请审查并决定下一步。")
         }
     }
 

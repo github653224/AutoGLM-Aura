@@ -75,7 +75,10 @@ class VisionWorker @Inject constructor(
      * @return WorkerReport 执行汇报
      */
     suspend fun executeSingleStep(goal: String): WorkerReport {
-        // 截图
+        // 截图前回收旧资源
+        currentScreenshot?.recycle()
+        currentScreenshot = null
+        
         delay(300)
         currentScreenshot = captureScreenshot()
         val currentApp = AutoAgentService.instance?.currentPackageName ?: "Unknown"
@@ -496,7 +499,8 @@ class VisionWorker @Inject constructor(
                 "home" -> actionExecutor.pressHome()
                 "launch", "open" -> {
                     val appName = parseApp(trimmed) ?: return false
-                    appManager.launchApp(appName)
+                    // 核心修复：从 actionExecutor 获取当前绑定的 displayId (可能是虚拟屏 ID)
+                    appManager.launchApp(appName, actionExecutor.getDisplayId())
                 }
                 "wait" -> {
                     val seconds = parseDuration(trimmed)

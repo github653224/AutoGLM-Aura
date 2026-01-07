@@ -41,8 +41,11 @@ class ShellServiceDeployer @Inject constructor(
         return "# 高级模式目前已完全重构为基于 Shizuku 的直接注入 (Binder 桥接)\n" +
                "# 这种模式比传统的 Shell/DEX 模式更稳定且响应更快。\n" +
                "# \n" +
-               "# 如果您没有 Shizuku，建议先安装 Shizuku 并通过无线调试激活它。\n" +
-               "# 目前已停止对手动 ADB 脚本模式的支持，以确保注入的安全性与性能。"
+               "# 使用方法：\n" +
+               "# 1. 安装并启动 Shizuku App\n" +
+               "# 2. 在 AutoGLM-Aura 中点击“授权并启动高级模式”\n" +
+               "# \n" +
+               "# 注意：已停止对手动 ADB 脚本模式的支持，以确保注入的安全性与性能。"
     }
     
     fun deployServerDex(): Boolean = true

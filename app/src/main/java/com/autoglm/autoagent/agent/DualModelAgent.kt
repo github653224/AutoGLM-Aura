@@ -46,7 +46,7 @@ class DualModelAgent @Inject constructor(
         private const val TAG = "DualModelAgent"
         private const val MAX_TOTAL_STEPS = 50
         private const val REVIEW_INTERVAL = 3      // 每3步审查
-        private const val REVIEW_TIMEOUT_MS = 8000L // 审查超时8秒
+        private const val REVIEW_TIMEOUT_MS = 6000L // 审查超时6秒
     }
 
     // ==================== 状态 ====================
@@ -156,6 +156,7 @@ class DualModelAgent @Inject constructor(
                 }
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.e(TAG, "任务执行失败", e)
             TaskResult.Error("执行失败: ${e.message}")
         } finally {
@@ -420,7 +421,12 @@ class DualModelAgent @Inject constructor(
                 }
                 
                 if (decision == null) {
-                    Log.d(TAG, "[$step] 审查超时，继续执行")
+                    Log.d(TAG, "[$step] 审查超时，检查是否可自行推进")
+                    // 核心逻辑: 如果小模型报告完成且大模型超时，为了效率我们先行推进
+                    if (report.status == WorkerStatus.COMPLETED) {
+                        contextManager.getPlan()?.markCurrentCompleted()
+                        log("⚠️ 审查超时，基于小模型汇报自动推进下一步")
+                    }
                     return@launch
                 }
                 
@@ -455,7 +461,13 @@ class DualModelAgent @Inject constructor(
         if (tool == null) return
         
         val result = when (tool.tool) {
-            ToolType.GET_UI -> AutoAgentService.instance?.dumpOptimizedUiTree()
+            ToolType.GET_UI -> {
+                if (agentRepository.isBackgroundMode) {
+                    "提示：当前处于后台隔离模式，系统无法提取 XML UI 树。请仅根据截图（Vision）进行分析和定位。"
+                } else {
+                    AutoAgentService.instance?.dumpOptimizedUiTree()
+                }
+            }
             ToolType.GET_HISTORY_SCREENSHOT -> contextManager.getScreenshot(tool.step ?: step)
             ToolType.GET_HISTORY_UI -> contextManager.getUiTree(tool.step ?: step)
         }
@@ -496,7 +508,12 @@ class DualModelAgent @Inject constructor(
             status = WorkerStatus.IN_PROGRESS,
             message = interruptReason.get() ?: ""
         )
-        return orchestrator.review(report, context)
+        val decision = orchestrator.review(report, context)
+        
+        // 关键修复：使用完后立即释放 Bitmap 资源
+        currentScreenshot?.recycle()
+        
+        return decision
     }
 
     private suspend fun waitForUserResume() {
@@ -562,9 +579,13 @@ class DualModelAgent @Inject constructor(
 
     // ==================== 辅助方法 ====================
 
-    private fun buildContext(): ContextSnapshot {
+    private suspend fun buildContext(): ContextSnapshot {
         val currentApp = AutoAgentService.instance?.currentPackageName ?: "Unknown"
         val plan = contextManager.getPlan()
+        
+        // 核心修复：在构建上下文时获取最新的截图，确保大模型能看到画面
+        val screenshot = captureCurrentScreenshot()
+        
         return ContextSnapshot(
             goal = plan?.goal ?: "",
             plan = plan,
@@ -573,7 +594,7 @@ class DualModelAgent @Inject constructor(
             textHistory = contextManager.getHistory(),
             notes = orchestrator.getNotes(),
             currentApp = currentApp,
-            currentScreenshot = null
+            currentScreenshot = screenshot
         )
     }
     

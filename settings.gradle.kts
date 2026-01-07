@@ -13,7 +13,7 @@ dependencyResolutionManagement {
         maven { url = uri("https://jitpack.io") }
     }
 }
-rootProject.name = "AutoGLM-Native"
+rootProject.name = "AutoGLM-Aura"
 include(":app")
 include(":server")
 include(":hidden-api")

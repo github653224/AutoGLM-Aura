@@ -6,7 +6,7 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
 import android.util.Log
-import com.autoglm.autoagent.shell.IAutoDroidShell
+import com.autoglm.autoagent.shell.IAutoGLMAuraShell
 import rikka.shizuku.Shizuku
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -15,13 +15,13 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Shizuku 管理器
- * 负责检查和管理 Shizuku 状态，并管理与 AutoDroidUserService 的 Binder 连接。
+ * 负责检查和管理 Shizuku 状态，并管理与 AutoGLM-AuraUserService 的 Binder 连接。
  */
 @Singleton
 class ShizukuManager @Inject constructor(
     @dagger.hilt.android.qualifiers.ApplicationContext private val context: Context
 ) {
-    private var userService: IAutoDroidShell? = null
+    private var userService: IAutoGLMAuraShell? = null
     private val _isServiceConnected = MutableStateFlow(false)
     val isServiceConnected = _isServiceConnected.asStateFlow()
 
@@ -96,7 +96,7 @@ class ShizukuManager @Inject constructor(
             Log.d("ShizukuManager", "🚀 Initializing Direct Binder Shell...")
             // 直接在当前进程创建服务实例
             // 由于该实例内部使用了 ShizukuBinderWrapper，它发出的所有请求都将带有 Shizuku 权限
-            userService = com.autoglm.autoagent.shell.AutoDroidUserService(context)
+            userService = com.autoglm.autoagent.shell.AutoGLMAuraUserService(context)
             _isServiceConnected.value = true
             Log.d("ShizukuManager", "✅ Direct Binder Shell initialized")
             true
@@ -119,7 +119,7 @@ class ShizukuManager @Inject constructor(
     /**
      * 获取当前服务接口
      */
-    fun getService(): IAutoDroidShell? = userService
+    fun getService(): IAutoGLMAuraShell? = userService
 
     /**
      * 检查 Shizuku 是否已安装

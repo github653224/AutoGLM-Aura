@@ -1,4 +1,9 @@
-# AutoDroid
+# AutoGLM-Aura
+
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Android](https://img.shields.io/badge/Platform-Android%207.0%2B-green.svg)](https://developer.android.com)
+[![Kotlin](https://img.shields.io/badge/Kotlin-1.9-purple.svg)](https://kotlinlang.org)
+[![Shizuku](https://img.shields.io/badge/Shizuku-Powered-orange.svg)](https://shizuku.rikka.app/)
 
 <div align="center">
 
@@ -14,15 +19,65 @@ Run AI Assistants directly on your phone, no PC required.
 
 ## Introduction
 
-AutoDroid is a native Android implementation of the [Open-AutoGLM](https://github.com/zai-org/Open-AutoGLM) project. Unlike the original project which controls the phone via ADB from a PC, AutoDroid is a complete Android application that runs independently on your device.
+AutoGLM-Aura is a native Android implementation of the [Open-AutoGLM](https://github.com/zai-org/Open-AutoGLM) project. Unlike the original project which controls the phone via ADB from a PC, AutoGLM-Aura is a complete Android application that runs independently on your device.
 
 **Key Features:**
 - 🤖 **Native Android App** - Runs directly on the phone, no PC needed.
 - 🎤 **Voice Control** - Supports voice commands for tasks.
 - 📱 **Automated Actions** - Controls apps via Accessibility Service.
+- 🚀 **Advanced Mode (Shizuku)** - Binder-level interaction with system permissions for higher performance and reliability.
+- 📺 **Virtual Screen Execution** - Runs tasks on a background virtual display, allowing you to use your phone normally while the agent works.
+- 🧠 **Dual Execution Modes**:
+    - **Turbo Mode**: Single model fast execution for simple tasks.
+    - **Deep Mode**: Orchestrator + Worker dual-model collaboration for complex tasks.
 - 🔒 **Secure Storage** - API configurations are encrypted.
 - 🌐 **Custom API** - Supports self-hosted or third-party AI services.
 - ✨ **Direct Injection** - Implements text input via native Accessibility Service injection, no keyboard switching required.
+
+### 🧠 Turbo vs Deep Mode
+
+| Feature | ⚡ Turbo Mode | 🧠 Deep Mode |
+|---|---|---|
+| **Model** | Single Model | Orchestrator + Worker (Dual) |
+| **Speed** | Fast (1-2s/step) | Thoughtful (3-5s/step) |
+| **Planning** | Implicit | Explicit step-by-step plan |
+| **Best For** | Simple tasks (e.g., "Open Settings") | Complex multi-step tasks (e.g., "Order a latte under $30") |
+| **Review** | None | Async review after every 3 steps |
+| **Timeout Resilience** | N/A | Auto-advances on timeout if worker reports completion |
+
+### 🏛️ Architecture
+
+```mermaid
+flowchart LR
+    subgraph User Interface
+        A[🎤 Voice / Text Input]
+    end
+
+    subgraph AgentCore
+        B[Sherpa-ONNX] --> C[AgentRepository]
+        C --> D{Mode?}
+        D -->|Turbo| E[Single Model Loop]
+        D -->|Deep| F[DualModelAgent]
+        F --> G[Orchestrator - Plan & Review]
+        F --> H[VisionWorker - Execute]
+    end
+
+    subgraph AI Backend
+        E --> I[LLM API]
+        G --> I
+        H --> J[Vision Model API]
+    end
+
+    subgraph Execution Layer
+        I --> K[FallbackActionExecutor]
+        J --> K
+        K --> L{Shizuku Available?}
+        L -->|Yes| M[Shizuku Service - Binder Injection]
+        L -->|No| N[Accessibility Service]
+        M --> O[📱 Android UI]
+        N --> O
+    end
+```
 
 ## Demo
 
@@ -55,13 +110,14 @@ Simply:
 
 ### Core Components
 
-#### 1. AutoAgentService (Accessibility Service)
+#### 1. AutoAgentService (Accessibility & Shizuku)
 Location: `app/src/main/java/com/autoglm/autoagent/service/AutoAgentService.kt`
+Location: `app/src/main/java/com/autoglm/autoagent/shell/AutoGLM-AuraUserService.kt`
 
-The core service for automation:
-- Screen capture and UI tree analysis.
-- Gestures: Click, Long Press, Scroll.
-- Text input via direct Accessibility API injection.
+The core services for automation:
+- **Accessibility Service**: Used for UI tree analysis and basic gestures.
+- **Advanced Shizuku Service**: Binder-level interaction for high-performance input injection and virtual display management.
+- **Virtual Display**: Allows background task execution without主屏幕 (main screen) interference.
 
 ```kotlin
 // Main Functions
@@ -87,26 +143,31 @@ frequency_penalty: 0.2
 max_tokens: 3000
 ```
 
-#### 3. AgentRepository (Business Logic)
+#### 3. Agent Orchestration (Turbo vs Deep Mode)
 Location: `app/src/main/java/com/autoglm/autoagent/data/AgentRepository.kt`
+Location: `app/src/main/java/com/autoglm/autoagent/agent/DualModelAgent.kt`
 
-Coordinates task execution flow:
-- Manages conversation history.
-- Execution Loop: Screenshot → AI Inference → Action Execution.
-- State and Log Management.
+Coordinates task execution:
+- **Turbo Mode**: Fast single-model execution loop (Screenshot → AI → Action).
+- **Deep Mode**: Dual-model orchestration where a "Large Model" plans and reviews, while a "Small Model" executes specific steps.
+- **State Management**: Handles Virtual Display lifecycle and task persistence.
 
 ## Setup Guide
 
 ### 1. Installation
-Install AutoDroid.apk (approx. 100 MB).
+Install AutoGLM-Aura.apk (approx. 100 MB).
 
-### 2. Permissions
-1. **Accessibility Service**
-   - Open AutoDroid, click "Enable Accessibility Service".
-   - Find and enable "AutoAgent Service" in system settings.
-2. **Other Permissions**
-   - Microphone (Voice Input)
-   - Network (AI Communication)
+### 2. Permissions & Services
+AutoGLM-Aura works best with two complementary services:
+1. **Accessibility Service** (Required for basic automation)
+   - Enable "AutoAgent Service" in system settings.
+2. **Shizuku Service** (Required for Advanced Mode)
+   - Install **Shizuku** and activate it via Wireless Debugging or Root.
+   - Authorize AutoGLM-Aura in the Shizuku app.
+3. **Other Permissions**
+   - Overlay/Floating Window (for controls).
+   - Display/Screen Recording (for background Virtual Display).
+   - Microphone (Voice commands).
 
 ### 3. API Configuration
 Go to Settings and enter your model API information.
@@ -116,36 +177,35 @@ Go to Settings and enter your model API information.
 - Model: `GLM-4.6V-Flash`
 - API Key: `Your API Key`
 
-## Comparisons
-
-| Feature | Open-AutoGLM (Original) | AutoDroid (This Project) |
-|---|---|---|
-| **Runtime** | PC controls Phone via ADB | Runs directly on Phone |
-| **Input** | CLI or Python API | Voice / Text UI |
-| **Complexity** | Requires Python & ADB | Install APK only |
-| **Screenshot** | ADB screencap command | Accessibility Service API |
-| **Execution** | ADB input command | Accessibility Gestures + Native Text Injection |
-| **Use Case** | Dev/Test, Batch Tasks | Daily Personal Use |
-
 ## Limitations
 
-1. **Accessibility Limits**
-   - Some system or secure apps may restrict accessibility access.
-2. **Screenshot Limits**
-   - Banking/Payment apps may block screenshots.
-3. **APK Size**
-   - Approx. 100 MB (includes offline voice models).
-4. **OS Version**
-   - Requires Android 7.0+.
+1. **Secure Content**
+   - Banking or highly secure apps may still block screenshots via `FLAG_SECURE`, even in Virtual Display mode.
+2. **Resource Usage**
+   - Running a background Virtual Display with AI inference requires a device with decent RAM (8GB+ recommended).
+3. **OS Consistency**
+   - While Virtual Display works on Android 7.0+, stability is significantly better on Android 11+ (especially for input injection).
+
+## ⚠️ Compatibility & Disclaimer
+
+Due to individual development with limited equipment and time, the project has only been tested on:
+- **Xiaomi**: Android 14 (HyperOS)
+- **Google Pixel**: Android 16 (Preview)
+
+**If you encounter any bugs, please submit a [GitHub Issue](https://github.com/aellnxin/AutoGLM-Aura/issues) or email [aellnxin@gmail.com](mailto:aellnxin@gmail.com)**
 
 ## Roadmap
 
 - [x] ~~Online Voice Recognition~~ - Upgraded to Sherpa-ONNX (Offline)
+- [x] **Advanced Mode** - Shizuku integration & Virtual Screen background execution
+- [x] **Dual Model Architecture** - Turbo (Fast) and Deep (Reasoning) modes
+- [x] **UI Polish & Animations** - Premium Glassmorphism design
 - [ ] Task History
 - [ ] Custom Shortcuts
-- [ ] UI Polish & Animations
-- [ ] Multi-language Support
-- [ ] Performance & Stability Improvements
+- [x] Performance & Stability Improvements (Shizuku Binder Bridge)
+- [ ] Multi-language Support (In-App)
+- [ ] Virtual Screen Floating Window (Preview background tasks)
+- [ ] Voice Wake-up (Hotword detection)
 
 ## Third-party Components and Referenced Projects
 
@@ -155,6 +215,7 @@ This project uses the following open-source components or references:
 - **Sherpa-ONNX** (Apache 2.0) - Offline Speech Recognition Engine
 - **Paraformer Model** (Apache 2.0) - Chinese Speech Recognition Model
 - **AutoGLM-Phone-9B family** (See original model license) - Large language model used via API
+- **Shizuku** (Apache 2.0) - System-level ADB service
 
 See [Third Party Licenses](./THIRD_PARTY_LICENSES.md) for details.
 
@@ -165,4 +226,5 @@ See [Third Party Licenses](./THIRD_PARTY_LICENSES.md) for details.
 ---
 
 **Developer**: Aell Xin
-**Last Updated**: 2026-01-03
+**Email**: aellnxin@gmail.com
+**Last Updated**: 2026-01-07

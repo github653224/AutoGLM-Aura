@@ -132,7 +132,7 @@ fun StatusCard(status: ActivationStatus) {
                     text = when (status) {
                         ActivationStatus.NOT_INSTALLED -> "需要先安装 Shizuku"
                         ActivationStatus.NOT_RUNNING -> "需要激活 Shizuku 服务"
-                        ActivationStatus.NO_PERMISSION -> "需要授权 AutoDroid"
+                        ActivationStatus.NO_PERMISSION -> "需要授权 AutoGLM-Aura"
                         ActivationStatus.ACTIVATED -> "所有高级功能可用"
                     },
                     style = MaterialTheme.typography.bodyMedium

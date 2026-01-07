@@ -1,6 +1,6 @@
 package com.autoglm.autoagent.shell;
 
-interface IAutoDroidShell {
+interface IAutoGLMAuraShell {
     /**
      * Test if service is alive
      */

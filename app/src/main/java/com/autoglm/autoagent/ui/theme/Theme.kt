@@ -25,7 +25,7 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 @Composable
-fun AutoDroidTheme(
+fun AutoGLMAuraTheme(
     darkTheme: Boolean = true, // Force Dark Theme
     content: @Composable () -> Unit
 ) {

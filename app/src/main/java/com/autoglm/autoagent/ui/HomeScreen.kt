@@ -31,6 +31,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.autoglm.autoagent.data.*
@@ -788,19 +790,30 @@ fun AskUserDialog(
     onDismiss: () -> Unit
 ) {
     var text by remember { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
+    
+    // 自动获取焦点
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
     
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.85f))
-            .clickable(enabled = false) {},
+            .pointerInput(Unit) {
+                detectTapGestures { /* 拦截点击，防止穿透到主屏 */ }
+            },
         contentAlignment = Alignment.Center
     ) {
         com.autoglm.autoagent.ui.components.GlassCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(24.dp)
-                .imePadding(),
+                .imePadding()
+                .pointerInput(Unit) {
+                    detectTapGestures { /* 拦截卡片内的点击，防止触发背景拦截逻辑 */ }
+                },
             backgroundColor = DarkSurface
         ) {
             Column(
@@ -841,7 +854,9 @@ fun AskUserDialog(
                 TextField(
                     value = text,
                     onValueChange = { text = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester),
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = Color.White.copy(alpha = 0.1f),
                         unfocusedContainerColor = Color.White.copy(alpha = 0.05f),
@@ -899,7 +914,6 @@ fun LogItem(log: LogEntry) {
     }
 }
 
-/** 卡片化的日志项，带步骤编号 */
 /** 卡片化的日志项，带步骤编号 */
 @Composable
 fun LogItemCard(log: LogEntry, stepNumber: Int) {

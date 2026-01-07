@@ -8,7 +8,7 @@ import javax.inject.Singleton
 /**
  * Shell Service Connector (AIDL Version)
  * 
- * Communicates with AutoDroidUserService via AIDL.
+ * Communicates with AutoGLM-AuraUserService via AIDL.
  */
 @Singleton
 class ShellServiceConnector @Inject constructor(
@@ -16,7 +16,7 @@ class ShellServiceConnector @Inject constructor(
 ) {
     private val TAG = "ShellServiceConnector"
 
-    private fun getService(): IAutoDroidShell? {
+    private fun getService(): IAutoGLMAuraShell? {
         val service = shizukuManager.getService()
         if (service == null) {
             Log.w(TAG, "Shell Service not connected")
@@ -60,6 +60,16 @@ class ShellServiceConnector @Inject constructor(
             false
         }
     }
+
+    /**
+     * Press Home key (KEYCODE_HOME = 3)
+     */
+    fun pressHome(): Boolean = injectKey(3)
+
+    /**
+     * Press Back key (KEYCODE_BACK = 4)
+     */
+    fun pressBack(): Boolean = injectKey(4)
 
     fun inputText(displayId: Int, text: String): Boolean {
         return try {

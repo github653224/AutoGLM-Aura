@@ -88,7 +88,7 @@ class TaskNotificationManager @Inject constructor(
     fun updateStatus(status: String) {
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("AutoDroid 正在执行")
+            .setContentTitle("AutoGLM-Aura 正在执行")
             .setContentText(status)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true) // 常驻

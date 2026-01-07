@@ -230,11 +230,13 @@ class AgentRepository @Inject constructor(
         val current = _chatMessages.value.toMutableList()
         current.add(ChatMessage(role = role, content = message))
         
-        // 同步记录到本地文件日志，支持 [应用日志] 页面查看
-        val level = if (role == "system" && message.contains("Error")) 
-            com.autoglm.autoagent.utils.FileLogger.LogLevel.ERROR else 
-            com.autoglm.autoagent.utils.FileLogger.LogLevel.INFO
-        fileLogger.log("Agent", level, "[$role] $message")
+        // 核心优化：异步记录文件日志，不阻塞任务主线程
+        repositoryScope.launch {
+            val level = if (role == "system" && message.contains("Error")) 
+                com.autoglm.autoagent.utils.FileLogger.LogLevel.ERROR else 
+                com.autoglm.autoagent.utils.FileLogger.LogLevel.INFO
+            fileLogger.log("Agent", level, "[$role] $message")
+        }
 
         // 保留最近200条日志，防止内存占用过大
         if (current.size > 200) {
@@ -353,13 +355,15 @@ class AgentRepository @Inject constructor(
                 val height = defaultScreenHeight
                 val density = context.resources.displayMetrics.densityDpi
                 
-                val displayId = shellConnector.createVirtualDisplay("AutoDroid-Agent", width, height, density)
+                val displayId = shellConnector.createVirtualDisplay("AutoGLMAura-Agent", width, height, density)
                 if (displayId > 0) {
                     virtualDisplayId = displayId
                     isBackgroundMode = true
                     addUiMessage("system", "🖥️ 后台隔离运行已开启 (ID: $displayId)")
                     Log.i("Agent", "Created VirtualDisplay: $displayId")
                     
+                    // 核心修复：先初始化执行器，再设置 DisplayId
+                    fallbackExecutor.initialize(defaultScreenWidth, defaultScreenHeight)
                     fallbackExecutor.setDisplayId(displayId)
                     
                     // 尝试提取目标 App 并直接在此显示器启动
@@ -367,8 +371,7 @@ class AgentRepository @Inject constructor(
                         appManager.findAppInText(goal) else null
                     
                     if (targetApp != null) {
-                        // [Fix] 尝试先停止 App 确保冷启动 (防止 "热切换" 导致的 DisplayId 迁移失败)
-                        // 安全性保障: stopApp 内部已禁止停止系统应用和 AutoDroid 自身
+                        // [Fix] 尝试先停止 App 确保冷启动
                         appManager.stopApp(targetApp)
                         delay(200)
 
@@ -378,6 +381,11 @@ class AgentRepository @Inject constructor(
                         }
                     }
                 }
+            }
+
+            // 如果上面没在后台模式初始化，这里做个兜底初始化（针对主屏模式）
+            if (!isBackgroundMode) {
+                fallbackExecutor.initialize(defaultScreenWidth, defaultScreenHeight)
             }
 
             // ===== 2. 检查 Agent 模式：DEEP 使用双模型 =====
@@ -429,8 +437,7 @@ class AgentRepository @Inject constructor(
         
         // ===== 检查完成 =====
         
-        // ===== 初始化执行器 =====
-        fallbackExecutor.initialize(defaultScreenWidth, defaultScreenHeight)
+        // ===== 配置模式切换监听 =====
         fallbackExecutor.onModeChanged = { fromMode, toMode ->
             val fromName = when (fromMode) {
                 com.autoglm.autoagent.executor.ExecutionMode.SHELL -> "Shell服务"
@@ -656,30 +663,33 @@ class AgentRepository @Inject constructor(
     }
 
     private fun stripPreviousImages() {
-        // Iterate through history and remove image_url from old user messages
-        // We iterate specifically over the mutable list `messages`
-        for (i in 0 until messages.size - 1) { // Skip the very last message (which might be the new one, though we call this before adding new one usually)
-            val msg = messages[i]
-            if (msg.role == "user" && msg.content is List<*>) {
-                try {
-                    @Suppress("UNCHECKED_CAST")
-                    val contentList = msg.content as? MutableList<ContentPart>
-                    if (contentList != null) {
-                        val iterator = contentList.iterator()
-                        var removed = false
-                        while (iterator.hasNext()) {
-                            val part = iterator.next()
-                            if (part.type == "image_url") {
-                                iterator.remove()
-                                removed = true
+        // 使用同步块保护，防止并发修改异常
+        synchronized(messages) {
+            // Iterate through history and remove image_url from old user messages
+            // We iterate specifically over the mutable list `messages`
+            for (i in 0 until messages.size - 1) { // Skip the very last message (which might be the new one, though we call this before adding new one usually)
+                val msg = messages[i]
+                if (msg.role == "user" && msg.content is List<*>) {
+                    try {
+                        @Suppress("UNCHECKED_CAST")
+                        val contentList = msg.content as? MutableList<ContentPart>
+                        if (contentList != null) {
+                            val iterator = contentList.iterator()
+                            var removed = false
+                            while (iterator.hasNext()) {
+                                val part = iterator.next()
+                                if (part.type == "image_url") {
+                                    iterator.remove()
+                                    removed = true
+                                }
+                            }
+                            if (removed) {
+                                contentList.add(ContentPart(type = "text", text = "(Previous screenshot removed to save context)"))
                             }
                         }
-                        if (removed) {
-                            contentList.add(ContentPart(type = "text", text = "(Previous screenshot removed to save context)"))
-                        }
+                    } catch (e: Exception) {
+                        Log.e("Agent", "Failed to strip image", e)
                     }
-                } catch (e: Exception) {
-                    Log.e("Agent", "Failed to strip image", e)
                 }
             }
         }
